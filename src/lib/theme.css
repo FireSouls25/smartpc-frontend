@@ -1,0 +1,177 @@
+@import "tailwindcss";
+
+/*
+ * THE single theme file (see docs/12-sistema-temas.md).
+ * Layer 1 — raw palette (Catppuccin Latte, light).
+ * Layer 2 — semantic tokens consumed by components (--bg, --fg, ...).
+ * Layer 3 — variants: [data-theme="dark"] redefines only the semantics.
+ * Components must use the semantic vars / classes below, never raw hex.
+ */
+
+@theme {
+  --color-ctp-base: #eff1f5;
+  --color-ctp-mantle: #e6e9ef;
+  --color-ctp-crust: #dce0e8;
+  --color-ctp-surface0: #ccd0da;
+  --color-ctp-surface1: #bcc0cc;
+  --color-ctp-text: #4c4f69;
+  --color-ctp-subtext1: #5c5f77;
+  --color-ctp-subtext0: #6c6f85;
+  --color-ctp-mauve: #8839ef;
+  --color-ctp-blue: #1e66f5;
+  --color-ctp-sapphire: #209fb5;
+  --color-ctp-teal: #179299;
+  --color-ctp-green: #40a02b;
+  --color-ctp-yellow: #df8e1d;
+  --color-ctp-peach: #fe640b;
+  --color-ctp-red: #d20f39;
+  --color-ctp-pink: #ea76cb;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, sans-serif;
+}
+
+:root,
+:root[data-theme="light"] {
+  --bg: #eff1f5;
+  --surface: #e6e9ef;
+  --surface-2: #dce0e8;
+  --border: #dce0e8;
+  --border-strong: #bcc0cc;
+  --fg: #4c4f69;
+  --fg-muted: #5c5f77;
+  --fg-faint: #6c6f85;
+  --accent: #8839ef;
+  --on-accent: #eff1f5;
+  --success: #40a02b;
+  --warn: #df8e1d;
+  --danger: #d20f39;
+  --info: #1e66f5;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #1e1e2e;
+  --surface: #181825;
+  --surface-2: #313244;
+  --border: #313244;
+  --border-strong: #45475a;
+  --fg: #cdd6f4;
+  --fg-muted: #bac2de;
+  --fg-faint: #a6adc8;
+  --accent: #cba6f7;
+  --on-accent: #11111b;
+  --success: #a6e3a1;
+  --warn: #f9e2af;
+  --danger: #f38ba8;
+  --info: #89b4fa;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer components {
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 1rem;
+    padding: 1.25rem;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 0.75rem;
+    padding: 0.625rem 1.25rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition:
+      filter 0.15s,
+      border-color 0.15s;
+  }
+  .btn:disabled {
+    opacity: 0.6;
+    cursor: wait;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+  .btn-primary:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
+  .btn-ghost {
+    background: transparent;
+    border-color: var(--border-strong);
+    color: var(--fg);
+  }
+  .btn-ghost:hover {
+    border-color: var(--fg-faint);
+  }
+  .btn-danger {
+    background: transparent;
+    border-color: var(--danger);
+    color: var(--danger);
+  }
+  .field {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 0.75rem;
+    padding: 0.625rem 0.875rem;
+    font-size: 0.875rem;
+    color: var(--fg);
+  }
+  .field:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 0;
+    border-color: var(--accent);
+  }
+  .label {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--fg-muted);
+    margin-bottom: 0.375rem;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    border-radius: 999px;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.75rem;
+    color: var(--fg-muted);
+  }
+  .muted {
+    color: var(--fg-muted);
+  }
+  .faint {
+    color: var(--fg-faint);
+  }
+  .dot {
+    display: inline-block;
+    height: 0.5rem;
+    width: 0.5rem;
+    border-radius: 999px;
+    flex-shrink: 0;
+  }
+  .error-box {
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+    color: var(--danger);
+    border-radius: 0.75rem;
+    padding: 0.625rem 0.875rem;
+    font-size: 0.8125rem;
+  }
+}
