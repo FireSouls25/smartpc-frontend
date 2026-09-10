@@ -18,6 +18,7 @@ use tower_http::{
     set_header::SetResponseHeaderLayer,
 };
 
+use crate::ai::provider::ActiveSelection;
 use crate::auth::{self, model::AuthError, store::Store};
 
 #[derive(Clone)]
@@ -27,6 +28,7 @@ pub struct AppState {
     pub access_ttl_secs: i64,
     pub refresh_ttl_secs: i64,
     pub sidecar_token: Arc<String>,
+    pub active: Arc<Mutex<ActiveSelection>>,
 }
 
 /// User id placed on the request by [`require_user`].
@@ -102,6 +104,9 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/auth/login", post(auth::routes::login))
         .route("/v1/auth/refresh", post(auth::routes::refresh))
         .route("/v1/auth/logout", post(auth::routes::logout))
+        .route("/v1/ai/providers", get(crate::ai::routes::providers))
+        .route("/v1/ai/select", post(crate::ai::routes::select))
+        .route("/v1/ai/chat", post(crate::ai::routes::chat))
         .merge(user_routes)
         .route_layer(middleware::from_fn_with_state(
             state.clone(),

@@ -7,6 +7,7 @@
 // Wiring: Electron spawns this binary with --port/--token/--db, waits for
 // the READY line on stdout, and hands url+token to the renderer bridge.
 // The per-launch token gates every /v1/* route; /health stays open.
+mod ai;
 mod api;
 mod auth;
 mod platform;
@@ -100,6 +101,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         access_ttl_secs: 15 * 60,
         refresh_ttl_secs: 30 * 24 * 3600,
         sidecar_token: Arc::new(token),
+        active: Arc::new(Mutex::new(crate::ai::provider::ActiveSelection::default())),
     };
 
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", args.port)).await?;

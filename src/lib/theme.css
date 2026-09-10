@@ -319,6 +319,10 @@ body {
   .msg-in {
     animation: rise 0.25s ease-out;
   }
+  .chip:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
 }
 
 @keyframes pop {

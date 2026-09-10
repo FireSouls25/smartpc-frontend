@@ -5,7 +5,7 @@
   import { navigate } from "../../app/router.svelte";
   import { t, getLang, setLang, type Lang, type I18nKey } from "../../lib/i18n.svelte";
   import { getTheme, setTheme, type Theme } from "../../lib/theme.svelte";
-  import { assistant, PROVIDERS } from "../assistant/assistant.store.svelte";
+  import { assistant } from "../assistant/assistant.store.svelte";
 
   let { onBack }: { onBack: () => void } = $props();
 
@@ -118,18 +118,29 @@
       {:else if section === 2}
         <div class="flex flex-col gap-4">
           <p class="muted text-sm">{t("settings.providerNote")}</p>
+          {#if assistant.providersError}
+            <p class="error-box">{assistant.providersError}</p>
+          {/if}
           <div>
             <p class="label">{t("chat.provider")}</p>
             <div class="flex flex-wrap gap-2">
-              {#each PROVIDERS as p (p.id)}
+              {#each assistant.providers as p (p.id)}
                 <button
                   class="chip"
-                  style={assistant.provider === p.id
+                  style={assistant.activeProvider === p.id
                     ? "border-color: var(--accent); color: var(--fg);"
                     : ""}
-                  onclick={() => assistant.setProvider(p.id)}
-                  aria-pressed={assistant.provider === p.id}
+                  onclick={() => void assistant.selectProvider(p.id)}
+                  aria-pressed={assistant.activeProvider === p.id}
+                  disabled={!p.available}
+                  title={p.available ? p.id : t("providers.offline")}
                 >
+                  <span
+                    class="dot"
+                    style="background: {p.available
+                      ? 'var(--success)'
+                      : 'var(--border-strong)'};"
+                  ></span>
                   {p.id}
                 </button>
               {/each}
@@ -138,20 +149,23 @@
           <div>
             <p class="label">{t("chat.model")}</p>
             <div class="flex flex-wrap gap-2">
-              {#each (PROVIDERS.find((p) => p.id === assistant.provider)?.models ?? []) as m (m)}
+              {#each assistant.activeModels() as m (m)}
                 <button
                   class="chip"
-                  style={assistant.model === m
+                  style={assistant.activeModel === m
                     ? "border-color: var(--accent); color: var(--fg);"
                     : ""}
-                  onclick={() => assistant.setModel(m)}
-                  aria-pressed={assistant.model === m}
+                  onclick={() => void assistant.selectModel(m)}
+                  aria-pressed={assistant.activeModel === m}
                 >
                   {m}
                 </button>
               {/each}
             </div>
           </div>
+          {#if assistant.selectError}
+            <p class="error-box">{assistant.selectError}</p>
+          {/if}
         </div>
       {:else}
         <div class="flex flex-col gap-3">

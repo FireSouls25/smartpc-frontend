@@ -9,6 +9,8 @@ src/native/
   src/main.rs            CLI (--port/--token/--db), READY contract, shutdown
   src/api.rs             router, sidecar-token gate, user gate, error mapping
   src/auth/              domain: model · service · store · routes · schema.sql
+  src/ai/                local models: provider trait · openai_compat client ·
+                         ollama + llamacpp presets · chat route
   src/platform/          shared SQLite setup (each domain owns its schema)
 ```
 
@@ -19,6 +21,13 @@ src/native/
   `/health` stays open for liveness probes.
 - Same auth contract as before: `POST /v1/auth/register|login|refresh|logout`,
   `GET /v1/auth/me`, `DELETE /v1/auth/account`, `{error:{code,message}}`.
+- Local models: `POST /v1/ai/chat`
+  `{provider: "ollama"|"llama.cpp", model?, messages[], temperature?,
+  max_tokens?, json_mode?}` → `{reply, model, provider}`.
+  One OpenAI-compatible client serves both (Ollama's `/v1` endpoint and
+  llama.cpp server speak it); vendors only preset URL/model/defaults.
+  Errors: `unknown_provider` 400, `ai_upstream` 502 when the model server
+  is down, `validation` 400.
 
 ## Security notes
 

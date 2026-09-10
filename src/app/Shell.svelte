@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { auth } from "../domains/auth/auth.store.svelte";
+  import { assistant } from "../domains/assistant/assistant.store.svelte";
   import { navigate } from "./router.svelte";
   import TopBar from "./TopBar.svelte";
   import EventsFeed from "../domains/assistant/EventsFeed.svelte";
@@ -11,6 +12,7 @@
 
   onMount(() => {
     if (!auth.user) navigate("login");
+    else void assistant.loadProviders();
   });
 </script>
 

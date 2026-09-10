@@ -1,9 +1,7 @@
 <script lang="ts">
   import MatrixOrb from "../../components/ui/matrix-orb.svelte";
-  import { assistant, PROVIDERS } from "./assistant.store.svelte";
+  import { assistant } from "./assistant.store.svelte";
   import { t } from "../../lib/i18n.svelte";
-
-  let draft = $state("");
 
   const orbLabels = () => ({
     idle: t("orb.idle"),
@@ -11,13 +9,9 @@
     thinking: t("orb.thinking"),
   });
 
-  const models: () => readonly string[] = () =>
-    PROVIDERS.find((p) => p.id === assistant.provider)?.models ?? [];
-
   function submit(e: SubmitEvent) {
     e.preventDefault();
-    assistant.send(draft);
-    draft = "";
+    void assistant.send(assistant.draft);
   }
 </script>
 
@@ -83,7 +77,8 @@
         class="min-w-0 flex-1 bg-transparent text-sm outline-none"
         style="color: var(--fg);"
         placeholder={t("chat.placeholder")}
-        bind:value={draft}
+        value={assistant.draft}
+        oninput={(e) => assistant.setDraft(e.currentTarget.value)}
       />
       <button class="btn btn-primary shrink-0" type="submit">
         <svg
@@ -100,6 +95,9 @@
         {t("chat.send")}
       </button>
     </form>
+    {#if assistant.voiceError}
+      <p class="error-box">{assistant.voiceError}</p>
+    {/if}
 
     <div class="flex flex-wrap items-center gap-2">
       <label class="chip">
@@ -107,11 +105,13 @@
         <select
           class="bg-transparent text-xs font-semibold outline-none"
           style="color: var(--fg);"
-          value={assistant.provider}
-          onchange={(e) => assistant.setProvider(e.currentTarget.value)}
+          value={assistant.activeProvider}
+          onchange={(e) => void assistant.selectProvider(e.currentTarget.value)}
         >
-          {#each PROVIDERS as p (p.id)}
-            <option value={p.id}>{p.id}</option>
+          {#each assistant.providers as p (p.id)}
+            <option value={p.id} disabled={!p.available}>
+              {p.id}{p.available ? "" : " — " + t("providers.offline")}
+            </option>
           {/each}
         </select>
       </label>
@@ -120,10 +120,10 @@
         <select
           class="bg-transparent text-xs font-semibold outline-none"
           style="color: var(--fg);"
-          value={assistant.model}
-          onchange={(e) => assistant.setModel(e.currentTarget.value)}
+          value={assistant.activeModel}
+          onchange={(e) => void assistant.selectModel(e.currentTarget.value)}
         >
-          {#each models() as m (m)}
+          {#each assistant.activeModels() as m (m)}
             <option value={m}>{m}</option>
           {/each}
         </select>
@@ -141,7 +141,21 @@
         ></span>
         {t("chat.gestures")}
       </button>
+      <button
+        class="chip"
+        onclick={() => void assistant.loadProviders()}
+        aria-label={t("providers.refresh")}
+      >
+        ↻ {t("providers.refresh")}
+      </button>
     </div>
-    <p class="faint text-[11px]">{t("chat.mockNote")}</p>
+    {#if assistant.selectError}
+      <p class="error-box">{assistant.selectError}</p>
+    {/if}
+    {#if !assistant.activeAvailable() && !assistant.providersLoading}
+      <p class="chip" style="border-color: var(--warn); color: var(--warn);">
+        {t("providers.needServer")}
+      </p>
+    {/if}
   </div>
 </div>
