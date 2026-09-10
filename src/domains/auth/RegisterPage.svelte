@@ -30,9 +30,9 @@
   }
 </script>
 
-<div class="grid min-h-screen place-items-center p-4">
+<div class="dot-bg grid min-h-screen place-items-center p-4">
   <div class="absolute right-4 top-4"><LangTheme /></div>
-  <div class="card w-full max-w-sm">
+  <div class="card-xl w-full max-w-sm">
     <div class="mb-5 flex items-center gap-3">
       <Logo />
       <div>
@@ -47,6 +47,7 @@
         <input
           id="reg-email"
           class="field"
+          style="border-radius: 1rem;"
           type="email"
           required
           autocomplete="email"
@@ -58,6 +59,7 @@
         <input
           id="reg-password"
           class="field"
+          style="border-radius: 1rem;"
           type="password"
           required
           minlength={8}
@@ -66,7 +68,7 @@
         />
       </div>
       {#if error}<p class="error-box">{error}</p>{/if}
-      <button class="btn btn-primary mt-1" type="submit" disabled={busy}>
+      <button class="btn btn-primary mt-1" style="border-radius: 1rem;" type="submit" disabled={busy}>
         {busy ? t("common.loading") : t("auth.registerBtn")}
       </button>
     </form>

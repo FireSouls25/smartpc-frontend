@@ -1,5 +1,27 @@
-// Minimal typed fetch wrapper. Base URL comes from VITE_API_URL.
-const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8080";
+// Minimal typed fetch wrapper. Talks to the Rust sidecar:
+// - inside Electron: url + per-launch token come from the preload bridge
+//   (main spawns the sidecar and injects them).
+// - plain web dev: VITE_API_URL / VITE_SIDECAR_TOKEN (run the sidecar manually).
+interface SidecarInfo {
+  url: string;
+  token: string;
+}
+
+function sidecar(): SidecarInfo | null {
+  return window.smartpc?.sidecar ?? null;
+}
+
+function base(): string {
+  return (
+    sidecar()?.url ??
+    import.meta.env.VITE_API_URL ??
+    "http://127.0.0.1:18080"
+  );
+}
+
+function sidecarToken(): string {
+  return sidecar()?.token ?? import.meta.env.VITE_SIDECAR_TOKEN ?? "";
+}
 
 export class ApiError extends Error {
   status: number;
@@ -19,11 +41,13 @@ interface Options {
 }
 
 export async function api<T>(path: string, opts: Options = {}): Promise<T> {
-  const res = await fetch(BASE + path, {
+  const gate = sidecarToken();
+  const res = await fetch(base() + path, {
     method: opts.method ?? "GET",
     headers: {
       "Content-Type": "application/json",
       ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
+      ...(gate ? { "X-Sidecar-Token": gate } : {}),
     },
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
