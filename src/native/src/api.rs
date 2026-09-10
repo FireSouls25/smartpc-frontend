@@ -10,7 +10,7 @@ use axum::{
     http::{header, HeaderName, HeaderValue, Method, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Json, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
     Router,
 };
 use tower_http::{
@@ -18,8 +18,10 @@ use tower_http::{
     set_header::SetResponseHeaderLayer,
 };
 
-use crate::ai::provider::ActiveSelection;
-use crate::auth::{self, model::AuthError, store::Store};
+use crate::{
+    auth::{self, model::AuthError, store::Store},
+    chat::store::ChatStore,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -28,7 +30,7 @@ pub struct AppState {
     pub access_ttl_secs: i64,
     pub refresh_ttl_secs: i64,
     pub sidecar_token: Arc<String>,
-    pub active: Arc<Mutex<ActiveSelection>>,
+    pub chat: Arc<Mutex<ChatStore>>,
 }
 
 /// User id placed on the request by [`require_user`].
@@ -95,9 +97,33 @@ fn cors_layer() -> CorsLayer {
 }
 
 pub fn router(state: AppState) -> Router {
+    // Sidecar-gated: identity-free local capabilities (detection needs no user).
     let user_routes = Router::new()
         .route("/v1/auth/me", get(auth::routes::me))
         .route("/v1/auth/account", delete(auth::routes::delete_account))
+        .route_layer(middleware::from_fn_with_state(state.clone(), require_user));
+    // User-gated: everything persisted is scoped to the authed user.
+    let user_ai = Router::new()
+        .route("/v1/ai/select", post(crate::chat::routes::select))
+        .route("/v1/ai/selection", get(crate::chat::routes::selection))
+        .route("/v1/ai/chat", post(crate::chat::routes::chat))
+        .route(
+            "/v1/chat/sessions",
+            get(crate::chat::routes::list_sessions).post(crate::chat::routes::create_session),
+        )
+        .route(
+            "/v1/chat/sessions/{id}",
+            get(crate::chat::routes::get_session).delete(crate::chat::routes::delete_session),
+        )
+        .route(
+            "/v1/actions",
+            get(crate::chat::routes::list_actions).post(crate::chat::routes::create_action),
+        )
+        .route(
+            "/v1/actions/{id}",
+            patch(crate::chat::routes::update_action),
+        )
+        .merge(user_routes)
         .route_layer(middleware::from_fn_with_state(state.clone(), require_user));
     let authed = Router::new()
         .route("/v1/auth/register", post(auth::routes::register))
@@ -105,9 +131,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/auth/refresh", post(auth::routes::refresh))
         .route("/v1/auth/logout", post(auth::routes::logout))
         .route("/v1/ai/providers", get(crate::ai::routes::providers))
-        .route("/v1/ai/select", post(crate::ai::routes::select))
-        .route("/v1/ai/chat", post(crate::ai::routes::chat))
-        .merge(user_routes)
+        .merge(user_ai)
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_sidecar_token,

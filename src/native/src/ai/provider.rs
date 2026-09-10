@@ -83,22 +83,6 @@ impl ProviderError {
     }
 }
 
-/// Active provider + model chosen by the user (in-memory, per sidecar run).
-#[derive(Debug, Clone)]
-pub struct ActiveSelection {
-    pub provider: String,
-    pub model: Option<String>,
-}
-
-impl Default for ActiveSelection {
-    fn default() -> Self {
-        Self {
-            provider: "ollama".into(),
-            model: None,
-        }
-    }
-}
-
 /// The contract every vendor implements. Small on purpose: chat in, text out,
 ///
 /// plus a live model listing so the UI only offers what truly exists.

@@ -35,38 +35,40 @@
 
 :root,
 :root[data-theme="light"] {
-  --bg: #eff1f5;
-  --surface: #e6e9ef;
-  --surface-2: #dce0e8;
-  --border: #dce0e8;
-  --border-strong: #bcc0cc;
-  --fg: #4c4f69;
-  --fg-muted: #5c5f77;
-  --fg-faint: #6c6f85;
-  --accent: #8839ef;
-  --on-accent: #eff1f5;
-  --success: #40a02b;
-  --warn: #df8e1d;
-  --danger: #d20f39;
-  --info: #1e66f5;
+  --bg: #e9e9ec;
+  --surface: #f5f5f6;
+  --surface-2: #e2e2e5;
+  --border: #dedee1;
+  --border-strong: #c9c9ce;
+  --fg: #131315;
+  --fg-muted: #55575d;
+  --fg-faint: #8b8e94;
+  --accent: #f04e00;
+  --on-accent: #ffffff;
+  --success: #1a7f37;
+  --warn: #b54708;
+  --danger: #d92d20;
+  --info: #175cd3;
+  --card: #ffffff;
   color-scheme: light;
 }
 
 :root[data-theme="dark"] {
-  --bg: #1e1e2e;
-  --surface: #181825;
-  --surface-2: #313244;
-  --border: #313244;
-  --border-strong: #45475a;
-  --fg: #cdd6f4;
-  --fg-muted: #bac2de;
-  --fg-faint: #a6adc8;
-  --accent: #cba6f7;
-  --on-accent: #11111b;
-  --success: #a6e3a1;
-  --warn: #f9e2af;
-  --danger: #f38ba8;
-  --info: #89b4fa;
+  --bg: #131315;
+  --surface: #1c1c1f;
+  --surface-2: #2c2c31;
+  --border: #2c2c31;
+  --border-strong: #3f3f46;
+  --fg: #f4f4f5;
+  --fg-muted: #b9bcc2;
+  --fg-faint: #8e9196;
+  --accent: #ff5c1a;
+  --on-accent: #ffffff;
+  --success: #4cc38a;
+  --warn: #fdb022;
+  --danger: #f97066;
+  --info: #53b1fd;
+  --card: #232327;
   color-scheme: dark;
 }
 
@@ -179,11 +181,18 @@ body {
 
   /* ---- App look: extra-rounded surfaces, soft white contrast ---- */
   .card-xl {
-    background: var(--surface);
+    background: var(--card, var(--surface));
     border: 1px solid var(--border);
     border-radius: 1.75rem;
     padding: 1.5rem;
-    box-shadow: 0 1px 2px rgb(76 79 105 / 0.05);
+    box-shadow: 0 1px 2px rgb(17 17 20 / 0.06);
+  }
+  /* Per-pane whites: left slightly gray, center brightest, right in between. */
+  .pane-a .card-xl {
+    background: var(--surface);
+  }
+  .pane-c .card-xl {
+    background: color-mix(in srgb, var(--surface) 55%, var(--bg));
   }
   .bubble-user {
     background: var(--accent);
@@ -217,7 +226,7 @@ body {
     width: 2.5rem;
     border-radius: 999px;
     border: 1px solid var(--border);
-    background: var(--surface);
+    background: var(--card, var(--surface));
     color: var(--fg-muted);
     cursor: pointer;
     transition:
@@ -286,6 +295,13 @@ body {
   .dropdown button[aria-checked="true"] {
     color: var(--fg);
     font-weight: 700;
+  }
+  .dropdown-up {
+    top: auto;
+    bottom: calc(100% + 10px);
+    max-height: 12rem;
+    overflow-y: auto;
+    min-width: 100%;
   }
   .switch {
     position: relative;

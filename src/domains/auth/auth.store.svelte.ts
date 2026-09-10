@@ -75,6 +75,9 @@ export const auth = {
   get user(): User | null {
     return user;
   },
+  get token(): string | null {
+    return accessToken;
+  },
   login,
   register,
   restore,

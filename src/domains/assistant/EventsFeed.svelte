@@ -23,8 +23,11 @@
   }
 </script>
 
-<aside class="card-xl flex min-h-[240px] min-h-0 flex-col gap-3">
+<aside class="card-xl flex h-full min-h-[240px] min-h-0 flex-col gap-3">
   <h2 class="px-1 text-sm font-bold">{t("events.title")}</h2>
+  {#if assistant.events.length === 0}
+    <p class="faint px-1 text-xs leading-relaxed">{t("events.empty")}</p>
+  {/if}
   <ul class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
     {#each assistant.events as ev (ev.id)}
       <li class="rounded-2xl border p-3 transition" style={box(ev.status)}>

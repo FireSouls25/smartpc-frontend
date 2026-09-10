@@ -224,8 +224,8 @@ pub fn verify_access(token: &str, secret: &[u8]) -> Result<String, AuthError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::provider::ActiveSelection;
     use crate::auth::store::Store;
+    use crate::chat::store::ChatStore;
     use std::sync::{Arc, Mutex};
 
     fn test_state() -> AppState {
@@ -235,7 +235,7 @@ mod tests {
             access_ttl_secs: 900,
             refresh_ttl_secs: 3600,
             sidecar_token: Arc::new("test-token-12345678".into()),
-            active: Arc::new(Mutex::new(ActiveSelection::default())),
+            chat: Arc::new(Mutex::new(ChatStore::open(":memory:").unwrap())),
         }
     }
 

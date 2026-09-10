@@ -1,29 +1,31 @@
-import { aiApi, type ProviderInfo } from "./assistant.api";
+import { aiApi, type ProviderInfo, type SessionSummary } from "./assistant.api";
 import { getLang, t, type I18nKey } from "../../lib/i18n.svelte";
 
 export type OrbState = "idle" | "listening" | "thinking";
 
 export interface ChatMsg {
-  id: number;
   role: "user" | "assistant";
   text?: string;
   textKey?: I18nKey;
 }
 
 export interface AppEvent {
-  id: number;
+  id: string;
   title: string;
   status: "running" | "done" | "failed";
-  /** One-shot actions finish; continuous ones (slides, dictation…) stay running. */
   continuous: boolean;
 }
 
-let seq = 1;
+const greeting = (): ChatMsg[] => [
+  { role: "assistant", textKey: "chat.hello" },
+];
+
 let orb = $state<OrbState>("idle");
-let messages = $state<ChatMsg[]>([
-  { id: 0, role: "assistant", textKey: "chat.hello" },
-]);
+let messages = $state<ChatMsg[]>(greeting());
 let events = $state<AppEvent[]>([]);
+let sessions = $state<SessionSummary[]>([]);
+let sessionsError = $state("");
+let activeSessionId = $state<string | null>(null);
 let providers = $state<ProviderInfo[]>([]);
 let providersLoading = $state(false);
 let providersError = $state("");
@@ -41,15 +43,34 @@ function defaultModelFor(list: ProviderInfo[], id: string): string {
   return p?.default_model || p?.models[0] || "";
 }
 
+function toEvent(a: {
+  id: string;
+  title: string;
+  status: string;
+}): AppEvent {
+  const status =
+    a.status === "done" ? "done" : a.status === "failed" ? "failed" : "running";
+  return {
+    id: a.id,
+    title: a.title,
+    status,
+    continuous: status === "running",
+  };
+}
+
 async function loadProviders(): Promise<void> {
   providersLoading = true;
   providersError = "";
   try {
     const res = await aiApi.providers();
     providers = res.providers;
-    activeProvider = res.active.provider;
-    activeModel =
-      res.active.model || defaultModelFor(providers, activeProvider);
+    try {
+      const sel = await aiApi.selection();
+      activeProvider = sel.provider;
+      activeModel = sel.model || defaultModelFor(providers, activeProvider);
+    } catch {
+      /* first run: no selection stored yet */
+    }
   } catch (err) {
     providersError = err instanceof Error ? err.message : "Error";
   } finally {
@@ -57,7 +78,7 @@ async function loadProviders(): Promise<void> {
   }
 }
 
-async function selectProvider(id: string): Promise<void> {
+async function selectProvider(id: string, model?: string | null): Promise<void> {
   selectError = "";
   const p = providers.find((x) => x.id === id);
   if (!p || !p.available) {
@@ -65,7 +86,7 @@ async function selectProvider(id: string): Promise<void> {
     return;
   }
   try {
-    const res = await aiApi.select(id);
+    const res = await aiApi.select(id, model ?? undefined);
     activeProvider = res.provider;
     activeModel = res.model || defaultModelFor(providers, activeProvider);
   } catch (err) {
@@ -74,14 +95,7 @@ async function selectProvider(id: string): Promise<void> {
 }
 
 async function selectModel(m: string): Promise<void> {
-  selectError = "";
-  try {
-    const res = await aiApi.select(activeProvider, m);
-    activeProvider = res.provider;
-    activeModel = res.model || m;
-  } catch (err) {
-    selectError = err instanceof Error ? err.message : "Error";
-  }
+  await selectProvider(activeProvider, m);
 }
 
 function activeModels(): string[] {
@@ -89,16 +103,50 @@ function activeModels(): string[] {
 }
 
 function activeAvailable(): boolean {
-  return (
-    providers.find((p) => p.id === activeProvider)?.available ?? false
-  );
+  return providers.find((p) => p.id === activeProvider)?.available ?? false;
+}
+
+async function refreshSessions(): Promise<void> {
+  try {
+    sessions = (await aiApi.sessions()).sessions;
+    sessionsError = "";
+  } catch (err) {
+    sessionsError = err instanceof Error ? err.message : "Error";
+  }
+}
+
+function newChat(): void {
+  activeSessionId = null;
+  messages = greeting();
+  events = [];
+}
+
+async function openSession(id: string): Promise<void> {
+  const d = await aiApi.sessionDetail(id);
+  activeSessionId = id;
+  messages = d.messages.map((m) => ({
+    role: m.role === "assistant" ? "assistant" : "user",
+    text: m.content,
+  }));
+  events = d.actions.map(toEvent);
+  // Adopt the session's combo so follow-ups keep its context.
+  await selectProvider(d.session.provider, d.session.model);
+}
+
+async function deleteSession(id: string): Promise<void> {
+  await aiApi.deleteSession(id);
+  sessions = sessions.filter((s) => s.id !== id);
+  if (activeSessionId === id) newChat();
 }
 
 function setDraft(v: string): void {
   draft = v;
 }
 
-/** Real send: user msg → thinking → local model reply + completed event. */
+/**
+ * Real send: the turn is persisted server-side (session + history).
+ * Plain chat never creates actions — those come only from command execution.
+ */
 async function send(text: string): Promise<void> {
   const clean = text.trim();
   if (!clean || orb === "thinking") return;
@@ -108,31 +156,22 @@ async function send(text: string): Promise<void> {
     /* not listening */
   }
   voiceError = "";
-  messages = [...messages, { id: seq++, role: "user", text: clean }];
+  messages = [...messages, { role: "user", text: clean }];
   draft = "";
   orb = "thinking";
-  const ev: AppEvent = {
-    id: seq++,
-    title: clean.slice(0, 80),
-    status: "running",
-    continuous: false,
-  };
-  events = [ev, ...events];
   try {
-    const res = await aiApi.chat([{ role: "user", content: clean }]);
-    messages = [...messages, { id: seq++, role: "assistant", text: res.reply }];
-    events = events.map((e) =>
-      e.id === ev.id ? { ...e, status: "done" as const } : e,
-    );
+    const res = await aiApi.chat(clean, activeSessionId);
+    activeSessionId = res.session_id;
+    const d = await aiApi.sessionDetail(res.session_id);
+    messages = d.messages.map((m) => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      text: m.content,
+    }));
+    events = d.actions.map(toEvent);
+    await refreshSessions();
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Error";
-    messages = [
-      ...messages,
-      { id: seq++, role: "assistant", text: `Error: ${msg}` },
-    ];
-    events = events.map((e) =>
-      e.id === ev.id ? { ...e, status: "failed" as const } : e,
-    );
+    messages = [...messages, { role: "assistant", text: `Error: ${msg}` }];
   } finally {
     orb = "idle";
   }
@@ -215,6 +254,15 @@ export const assistant = {
   get events(): AppEvent[] {
     return events;
   },
+  get sessions(): SessionSummary[] {
+    return sessions;
+  },
+  get sessionsError(): string {
+    return sessionsError;
+  },
+  get activeSessionId(): string | null {
+    return activeSessionId;
+  },
   get providers(): ProviderInfo[] {
     return providers;
   },
@@ -249,8 +297,12 @@ export const assistant = {
   },
   setDraft,
   loadProviders,
+  refreshSessions,
   selectProvider,
   selectModel,
+  newChat,
+  openSession,
+  deleteSession,
   toggleGestures(): void {
     gesturesOn = !gesturesOn;
   },

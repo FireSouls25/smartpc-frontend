@@ -10,6 +10,7 @@
 mod ai;
 mod api;
 mod auth;
+mod chat;
 mod platform;
 
 use std::sync::{Arc, Mutex};
@@ -95,13 +96,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let jwt_secret = hasher.finalize().to_vec();
 
     let store = Store::open(&db_path)?;
+    let chat_store = crate::chat::store::ChatStore::open(&db_path)?;
     let state = api::AppState {
         store: Arc::new(Mutex::new(store)),
+        chat: Arc::new(Mutex::new(chat_store)),
         jwt_secret: Arc::new(jwt_secret),
         access_ttl_secs: 15 * 60,
         refresh_ttl_secs: 30 * 24 * 3600,
         sidecar_token: Arc::new(token),
-        active: Arc::new(Mutex::new(crate::ai::provider::ActiveSelection::default())),
     };
 
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", args.port)).await?;

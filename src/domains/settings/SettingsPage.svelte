@@ -6,6 +6,7 @@
   import { t, getLang, setLang, type Lang, type I18nKey } from "../../lib/i18n.svelte";
   import { getTheme, setTheme, type Theme } from "../../lib/theme.svelte";
   import { assistant } from "../assistant/assistant.store.svelte";
+  import SelectMenu from "../../shared/SelectMenu.svelte";
 
   let { onBack }: { onBack: () => void } = $props();
 
@@ -123,45 +124,26 @@
           {/if}
           <div>
             <p class="label">{t("chat.provider")}</p>
-            <div class="flex flex-wrap gap-2">
-              {#each assistant.providers as p (p.id)}
-                <button
-                  class="chip"
-                  style={assistant.activeProvider === p.id
-                    ? "border-color: var(--accent); color: var(--fg);"
-                    : ""}
-                  onclick={() => void assistant.selectProvider(p.id)}
-                  aria-pressed={assistant.activeProvider === p.id}
-                  disabled={!p.available}
-                  title={p.available ? p.id : t("providers.offline")}
-                >
-                  <span
-                    class="dot"
-                    style="background: {p.available
-                      ? 'var(--success)'
-                      : 'var(--border-strong)'};"
-                  ></span>
-                  {p.id}
-                </button>
-              {/each}
-            </div>
+            <SelectMenu
+              label={t("chat.provider")}
+              value={assistant.activeProvider}
+              options={assistant.providers.map((p) => ({
+                value: p.id,
+                label: p.id,
+                disabled: !p.available,
+                hint: p.available ? undefined : t("providers.offline"),
+              }))}
+              onChange={(v) => void assistant.selectProvider(v)}
+            />
           </div>
           <div>
             <p class="label">{t("chat.model")}</p>
-            <div class="flex flex-wrap gap-2">
-              {#each assistant.activeModels() as m (m)}
-                <button
-                  class="chip"
-                  style={assistant.activeModel === m
-                    ? "border-color: var(--accent); color: var(--fg);"
-                    : ""}
-                  onclick={() => void assistant.selectModel(m)}
-                  aria-pressed={assistant.activeModel === m}
-                >
-                  {m}
-                </button>
-              {/each}
-            </div>
+            <SelectMenu
+              label={t("chat.model")}
+              value={assistant.activeModel}
+              options={assistant.activeModels().map((m) => ({ value: m, label: m }))}
+              onChange={(v) => void assistant.selectModel(v)}
+            />
           </div>
           {#if assistant.selectError}
             <p class="error-box">{assistant.selectError}</p>

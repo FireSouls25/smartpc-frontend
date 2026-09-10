@@ -1,5 +1,6 @@
 <script lang="ts">
   import MatrixOrb from "../../components/ui/matrix-orb.svelte";
+  import SelectMenu from "../../shared/SelectMenu.svelte";
   import { assistant } from "./assistant.store.svelte";
   import { t } from "../../lib/i18n.svelte";
 
@@ -15,12 +16,12 @@
   }
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col gap-4">
-  <div class="card-xl flex flex-col items-center !py-4">
+<div class="flex h-full min-h-0 flex-1 flex-col gap-4">
+  <div class="card-xl flex flex-col items-center" style="padding-top: 1rem; padding-bottom: 1rem;">
     <MatrixOrb
       state={assistant.orb}
       size={180}
-      color="#8839ef"
+      color="#f04e00"
       labels={orbLabels()}
     />
   </div>
@@ -30,7 +31,7 @@
       class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto"
       aria-live="polite"
     >
-      {#each assistant.messages as m (m.id)}
+      {#each assistant.messages as m, i (i)}
         {#if m.role === "user"}
           <div class="msg-in flex justify-end">
             <p class="bubble-user">{m.text}</p>
@@ -100,34 +101,23 @@
     {/if}
 
     <div class="flex flex-wrap items-center gap-2">
-      <label class="chip">
-        <span class="faint">{t("chat.provider")}</span>
-        <select
-          class="bg-transparent text-xs font-semibold outline-none"
-          style="color: var(--fg);"
-          value={assistant.activeProvider}
-          onchange={(e) => void assistant.selectProvider(e.currentTarget.value)}
-        >
-          {#each assistant.providers as p (p.id)}
-            <option value={p.id} disabled={!p.available}>
-              {p.id}{p.available ? "" : " — " + t("providers.offline")}
-            </option>
-          {/each}
-        </select>
-      </label>
-      <label class="chip">
-        <span class="faint">{t("chat.model")}</span>
-        <select
-          class="bg-transparent text-xs font-semibold outline-none"
-          style="color: var(--fg);"
-          value={assistant.activeModel}
-          onchange={(e) => void assistant.selectModel(e.currentTarget.value)}
-        >
-          {#each assistant.activeModels() as m (m)}
-            <option value={m}>{m}</option>
-          {/each}
-        </select>
-      </label>
+      <SelectMenu
+        label={t("chat.provider")}
+        value={assistant.activeProvider}
+        options={assistant.providers.map((p) => ({
+          value: p.id,
+          label: p.id,
+          disabled: !p.available,
+          hint: p.available ? undefined : t("providers.offline"),
+        }))}
+        onChange={(v) => void assistant.selectProvider(v)}
+      />
+      <SelectMenu
+        label={t("chat.model")}
+        value={assistant.activeModel}
+        options={assistant.activeModels().map((m) => ({ value: m, label: m }))}
+        onChange={(v) => void assistant.selectModel(v)}
+      />
       <button
         class="chip"
         onclick={() => assistant.toggleGestures()}

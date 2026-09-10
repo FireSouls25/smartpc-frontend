@@ -11,6 +11,7 @@ src/native/
   src/auth/              domain: model · service · store · routes · schema.sql
   src/ai/                local models: provider trait · openai_compat client ·
                          ollama + llamacpp presets · chat route
+  src/chat/               sessions · messages · actions · selection (per user)
   src/platform/          shared SQLite setup (each domain owns its schema)
 ```
 
@@ -22,12 +23,15 @@ src/native/
 - Same auth contract as before: `POST /v1/auth/register|login|refresh|logout`,
   `GET /v1/auth/me`, `DELETE /v1/auth/account`, `{error:{code,message}}`.
 - Local models: `POST /v1/ai/chat`
-  `{provider: "ollama"|"llama.cpp", model?, messages[], temperature?,
-  max_tokens?, json_mode?}` → `{reply, model, provider}`.
-  One OpenAI-compatible client serves both (Ollama's `/v1` endpoint and
-  llama.cpp server speak it); vendors only preset URL/model/defaults.
-  Errors: `unknown_provider` 400, `ai_upstream` 502 when the model server
-  is down, `validation` 400.
+  `{session_id?, provider?, model?, message}` → `{reply, model, provider,
+  session_id}`. Turns persist in the session (last 20 feed the model).
+  Plain chat never creates actions.
+- `GET /v1/ai/providers` (live detection) · `POST /v1/ai/select` (validates
+  + persists) · `GET /v1/ai/selection`.
+- Sessions: `GET|POST /v1/chat/sessions`, `GET|DELETE /v1/chat/sessions/{id}`
+  (detail includes messages + actions).
+- Actions (executor hook): `GET /v1/actions?session_id=`,
+  `POST /v1/actions`, `PATCH /v1/actions/{id}`. All user-scoped.
 
 ## Security notes
 

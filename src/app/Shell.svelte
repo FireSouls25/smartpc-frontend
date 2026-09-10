@@ -6,23 +6,35 @@
   import TopBar from "./TopBar.svelte";
   import EventsFeed from "../domains/assistant/EventsFeed.svelte";
   import CenterPanel from "../domains/assistant/CenterPanel.svelte";
+  import SessionsPane from "../domains/assistant/SessionsPane.svelte";
   import SettingsPage from "../domains/settings/SettingsPage.svelte";
 
   let view = $state<"main" | "settings">("main");
 
   onMount(() => {
     if (!auth.user) navigate("login");
-    else void assistant.loadProviders();
+    else {
+      void assistant.loadProviders().then(() => assistant.refreshSessions());
+    }
   });
 </script>
 
 <div class="dot-bg min-h-screen">
-  <div class="mx-auto flex min-h-screen max-w-6xl flex-col px-4 md:px-6">
+  <div class="mx-auto flex min-h-screen max-w-7xl flex-col px-4 md:px-6">
     <TopBar onSettings={() => (view = "settings")} />
     {#if view === "main"}
-      <div class="grid flex-1 gap-4 pb-8 lg:grid-cols-[300px_minmax(0,1fr)]">
-        <EventsFeed />
-        <CenterPanel />
+      <div
+        class="grid flex-1 gap-4 pb-8 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_300px]"
+      >
+        <div class="pane-a flex min-h-0 flex-col">
+          <EventsFeed />
+        </div>
+        <div class="pane-b flex min-h-0 flex-col">
+          <CenterPanel />
+        </div>
+        <div class="pane-c hidden min-h-0 flex-col xl:flex">
+          <SessionsPane />
+        </div>
       </div>
     {:else}
       <div class="pb-8">
