@@ -11,6 +11,7 @@ mod ai;
 mod api;
 mod auth;
 mod chat;
+mod harness;
 mod platform;
 
 use std::sync::{Arc, Mutex};

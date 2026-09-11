@@ -4,7 +4,7 @@
 //! Plain chat only stores text. Actions are created exclusively by command
 //! execution (the future executor will POST them); the left pane reads them
 //! per session, so old sessions show the actions they caused.
-use std::sync::MutexGuard;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use axum::{
     extract::{Extension, Path, Query, State},
@@ -246,6 +246,7 @@ pub async fn chat(
                     Role::User
                 },
                 content: m.content,
+                tool_calls: None,
             })
             .collect()
     };
@@ -546,5 +547,199 @@ pub async fn update_action(
             })),
         )
             .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct RunBody {
+    pub session_id: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub message: String,
+    pub lang: Option<String>,
+}
+
+/// Agentic run: the model reasons with tools (see harness/) until done.
+/// Persists like chat; every mutating tool call becomes an Action row, so
+/// the left pane shows real executions with live statuses.
+pub async fn run(
+    State(s): State<AppState>,
+    Extension(AuthedUser(uid)): Extension<AuthedUser>,
+    Json(b): Json<RunBody>,
+) -> impl IntoResponse {
+    let message = b.message.trim().to_string();
+    if message.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": { "code": "validation", "message": "message must not be empty", "field": "message" }
+            })),
+        )
+            .into_response();
+    }
+    let internal = || {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": { "code": "internal", "message": "internal server error" } })),
+        )
+            .into_response()
+    };
+
+    let persisted: Option<Selection> = match lock_chat(&s) {
+        Ok(store) => store.get_selection(&uid).ok().flatten(),
+        Err(r) => return r,
+    };
+    let prov_name = non_empty(&b.provider).unwrap_or_else(|| {
+        persisted
+            .as_ref()
+            .map(|p| p.provider.clone())
+            .unwrap_or_else(|| "ollama".into())
+    });
+    let provider = match Provider::resolve(&prov_name) {
+        Ok(p) => p,
+        Err(e) => return error_response(&e),
+    };
+    let model = non_empty(&b.model)
+        .or_else(|| {
+            persisted.as_ref().and_then(|p| {
+                if p.provider == provider.name() {
+                    p.model.clone()
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or_else(|| provider.default_model().to_string());
+
+    let session_id: String = {
+        let store = match lock_chat(&s) {
+            Ok(g) => g,
+            Err(r) => return r,
+        };
+        match &b.session_id {
+            Some(id) => match store.get_session(id, &uid) {
+                Ok(Some(sess)) => sess.id,
+                _ => {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Json(serde_json::json!({
+                            "error": { "code": "not_found", "message": "session not found" }
+                        })),
+                    )
+                        .into_response();
+                }
+            },
+            None => match store.create_session(&uid, &title_of(&message), &prov_name, Some(&model))
+            {
+                Ok(sess) => sess.id,
+                Err(_) => return internal(),
+            },
+        }
+    };
+
+    let history: Vec<LlmMessage> = {
+        let store = match lock_chat(&s) {
+            Ok(g) => g,
+            Err(r) => return r,
+        };
+        if store.add_message(&session_id, "user", &message).is_err() {
+            return internal();
+        }
+        store
+            .list_messages(&session_id)
+            .unwrap_or_default()
+            .into_iter()
+            .rev()
+            .take(20)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .map(|m| LlmMessage {
+                role: if m.role == "assistant" {
+                    Role::Assistant
+                } else {
+                    Role::User
+                },
+                content: m.content,
+                tool_calls: None,
+            })
+            .collect()
+    };
+
+    // Fresh context every run: the model reasons with current facts.
+    let ctx = crate::harness::context::gather();
+    let lang = b
+        .lang
+        .as_deref()
+        .filter(|l| !l.trim().is_empty())
+        .unwrap_or("es");
+    let system = crate::harness::prompt::system_prompt(&ctx, lang);
+    let sink = DbActionSink {
+        chat: s.chat.clone(),
+        session_id: session_id.clone(),
+        user_id: uid.clone(),
+    };
+    let policy = crate::harness::exec::Policy::from_env();
+    let (reply, trace) = match crate::harness::agent::run_loop(
+        &provider, &model, history, &system, &sink, &policy, 6,
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => return error_response(&e),
+    };
+
+    {
+        let store = match lock_chat(&s) {
+            Ok(g) => g,
+            Err(r) => return r,
+        };
+        if store.add_message(&session_id, "assistant", &reply).is_err() {
+            return internal();
+        }
+        let _ = store.touch_session(&session_id, provider.name(), Some(&model));
+    }
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "reply": reply, "model": model, "provider": provider.name(),
+            "session_id": session_id, "steps": trace,
+        })),
+    )
+        .into_response()
+}
+
+struct DbActionSink {
+    chat: Arc<Mutex<ChatStore>>,
+    session_id: String,
+    user_id: String,
+}
+
+impl crate::harness::agent::ActionSink for DbActionSink {
+    fn action_started(&self, kind: &str, title: &str) -> Option<String> {
+        // Single source of truth: the catalog decides what becomes an Action.
+        let records = crate::harness::tools::catalog()
+            .iter()
+            .find(|t| t.name == kind)
+            .is_some_and(|t| t.records_action);
+        if !records {
+            return None; // read-only tools stay in the trace only
+        }
+        self.chat
+            .lock()
+            .ok()?
+            .create_action(Some(&self.session_id), &self.user_id, kind, title)
+            .ok()
+            .map(|a| a.id)
+    }
+
+    fn action_finished(&self, action_id: &str, ok: bool) {
+        if let Ok(store) = self.chat.lock() {
+            let _ = store.set_action_status_owned(
+                action_id,
+                &self.user_id,
+                if ok { "done" } else { "failed" },
+            );
+        }
     }
 }

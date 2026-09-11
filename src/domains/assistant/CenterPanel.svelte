@@ -52,9 +52,30 @@
           </div>
         {:else}
           <div class="msg-in flex justify-start">
-            <p class="bubble-assistant">
-              {m.textKey ? t(m.textKey) : m.text}
-            </p>
+            <div class="flex max-w-[85%] flex-col gap-1">
+              <p class="bubble-assistant" style="max-width: 100%;">
+                {m.textKey ? t(m.textKey) : m.text}
+              </p>
+              {#if m.steps?.length}
+                <div class="flex flex-wrap gap-1 pl-1">
+                  {#each m.steps as st (st.tool)}
+                    <span
+                      class="chip"
+                      style="font-size: 10px; padding: 2px 8px;"
+                      title={st.ok ? "tool ok" : "tool failed"}
+                    >
+                      <span
+                        class="dot"
+                        style="background: {st.ok
+                          ? 'var(--success)'
+                          : 'var(--danger)'}; height: 6px; width: 6px;"
+                      ></span>
+                      {st.tool}
+                    </span>
+                  {/each}
+                </div>
+              {/if}
+            </div>
           </div>
         {/if}
       {/each}

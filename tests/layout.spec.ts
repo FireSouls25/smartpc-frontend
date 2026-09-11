@@ -1,10 +1,10 @@
 import { test, expect } from "@playwright/test";
 
-// Needs the sidecar on :18080 (the app's default loopback URL) — a real
+// Needs the sidecar on :18081 (same as frontend/.env) — a real
 // Ollama behind it makes test 2 meaningful, but it also passes degraded
 // (failed event + error bubble) as long as the plumbing works.
 const APP = "http://127.0.0.1:5199";
-const SIDECAR = "http://127.0.0.1:18080";
+const SIDECAR = "http://127.0.0.1:18081";
 const GATE = "dev-token-min-16-chars";
 
 test.beforeEach(async ({ context, request }) => {
@@ -83,7 +83,7 @@ test("real send persists and appears in sessions", async ({ page }) => {
 
   // Use a model that truly exists here (the default may not be installed).
   const detected = await page.evaluate(async () => {
-    const r = await fetch("http://127.0.0.1:18080/v1/ai/providers", {
+    const r = await fetch("http://127.0.0.1:18081/v1/ai/providers", {
       headers: { "X-Sidecar-Token": "dev-token-min-16-chars" },
     });
     return (await r.json()) as {
@@ -99,7 +99,8 @@ test("real send persists and appears in sessions", async ({ page }) => {
   const menus = page.locator("[data-selectmenu]");
   await menus.nth(1).getByRole("button").click();
   await page.getByRole("option", { name: model }).click();
-  await expect(page.getByText(model).first()).toBeVisible();
+  // The closed menu button must show the new model (proves select persisted).
+  await expect(menus.nth(1).getByRole("button")).toContainText(model);
 
   const input = page.getByPlaceholder(/Pídele algo|Ask your PC/);
   await input.fill("Reply with exactly: hola-test");

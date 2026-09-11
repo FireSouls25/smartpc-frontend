@@ -7,6 +7,7 @@ export interface ChatMsg {
   role: "user" | "assistant";
   text?: string;
   textKey?: I18nKey;
+  steps?: { tool: string; ok: boolean }[];
 }
 
 export interface AppEvent {
@@ -160,12 +161,14 @@ async function send(text: string): Promise<void> {
   draft = "";
   orb = "thinking";
   try {
-    const res = await aiApi.chat(clean, activeSessionId);
+    const res = await aiApi.run(clean, activeSessionId, { lang: getLang() });
     activeSessionId = res.session_id;
     const d = await aiApi.sessionDetail(res.session_id);
-    messages = d.messages.map((m) => ({
+    const steps = (res.steps ?? []).map((s) => ({ tool: s.tool, ok: s.ok }));
+    messages = d.messages.map((m, i, arr) => ({
       role: m.role === "assistant" ? "assistant" : "user",
       text: m.content,
+      ...(i === arr.length - 1 && steps.length > 0 ? { steps } : {}),
     }));
     events = d.actions.map(toEvent);
     await refreshSessions();

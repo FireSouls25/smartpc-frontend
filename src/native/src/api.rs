@@ -107,6 +107,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/ai/select", post(crate::chat::routes::select))
         .route("/v1/ai/selection", get(crate::chat::routes::selection))
         .route("/v1/ai/chat", post(crate::chat::routes::chat))
+        .route("/v1/ai/run", post(crate::chat::routes::run))
         .route(
             "/v1/chat/sessions",
             get(crate::chat::routes::list_sessions).post(crate::chat::routes::create_session),

@@ -40,6 +40,22 @@ function withAuth(token?: string): { token?: string } {
   return token ? { token } : {};
 }
 
+export interface RunStep {
+  tool: string;
+  args: unknown;
+  action_id: string | null;
+  ok: boolean;
+  output_preview: string;
+}
+
+export interface RunResponse {
+  reply: string;
+  model: string;
+  provider: string;
+  session_id: string;
+  steps: RunStep[];
+}
+
 export const aiApi = {
   providers: () =>
     api<{ providers: ProviderInfo[] }>("/v1/ai/providers"),
@@ -76,6 +92,24 @@ export const aiApi = {
         ...withAuth(auth.token ?? undefined),
       },
     ),
+
+  /** Agentic run: model reasons with tools; mutating calls become actions. */
+  run: (
+    message: string,
+    sessionId: string | null,
+    opts?: { provider?: string; model?: string; lang?: string },
+  ) =>
+    api<RunResponse>("/v1/ai/run", {
+      method: "POST",
+      body: {
+        session_id: sessionId,
+        provider: opts?.provider,
+        model: opts?.model,
+        message,
+        lang: opts?.lang,
+      },
+      ...withAuth(auth.token ?? undefined),
+    }),
 
   sessions: () =>
     api<{ sessions: SessionSummary[] }>(

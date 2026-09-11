@@ -4,7 +4,9 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use super::provider::{ChatMessage, ChatOptions, ChatResponse, ProviderError};
+use super::provider::{
+    ChatMessage, ChatOptions, ChatResponse, ProviderError, ToolCall, ToolChatResponse,
+};
 
 #[derive(Debug, Clone)]
 pub struct OpenAiCompatConfig {
@@ -150,6 +152,78 @@ impl OpenAiCompatClient {
             None => Err(ProviderError::BadResponse("empty choices".into())),
         }
     }
+
+    /// Tools-aware chat for the agent loop. Same endpoint, plus the `tools`
+    /// array; parses both plain replies and `tool_calls`.
+    pub async fn chat_with_tools(
+        &self,
+        messages: Vec<ChatMessage>,
+        opts: &ChatOptions,
+        tools: &[serde_json::Value],
+    ) -> Result<ToolChatResponse, ProviderError> {
+        let mut body = serde_json::json!({
+            "model": &opts.model,
+            "messages": messages,
+        });
+        if let Some(t) = opts.temperature {
+            body["temperature"] = t.into();
+        }
+        if let Some(m) = opts.max_tokens {
+            body["max_tokens"] = m.into();
+        }
+        body["tools"] = serde_json::Value::Array(tools.to_vec());
+        let mut req = self.http.post(self.endpoint()).json(&body);
+        if let Some(key) = self.config.api_key.as_deref().filter(|k| !k.is_empty()) {
+            req = req.bearer_auth(key);
+        }
+        let resp = req.send().await.map_err(|e| {
+            if e.is_connect() || e.is_timeout() {
+                ProviderError::Unreachable(e.to_string())
+            } else {
+                ProviderError::BadResponse(format!("request failed: {e}"))
+            }
+        })?;
+        let status = resp.status().as_u16();
+        if !(200..300).contains(&status) {
+            let snippet: String = resp
+                .text()
+                .await
+                .unwrap_or_default()
+                .chars()
+                .take(300)
+                .collect();
+            return Err(ProviderError::Status(status, snippet));
+        }
+        let parsed: CompatToolsResponse = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::BadResponse(format!("invalid chat response: {e}")))?;
+        match parsed.choices.into_iter().next() {
+            Some(c) => Ok(ToolChatResponse {
+                text: c.message.content.unwrap_or_default(),
+                tool_calls: c.message.tool_calls,
+            }),
+            None => Err(ProviderError::BadResponse("empty choices".into())),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct CompatToolsResponse {
+    #[serde(default)]
+    choices: Vec<CompatToolsChoice>,
+}
+
+#[derive(Deserialize)]
+struct CompatToolsChoice {
+    message: CompatToolsMessage,
+}
+
+#[derive(Deserialize)]
+struct CompatToolsMessage {
+    content: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<ToolCall>,
 }
 
 #[cfg(test)]
@@ -197,6 +271,7 @@ mod tests {
                 vec![ChatMessage {
                     role: super::super::provider::Role::User,
                     content: "hi".into(),
+                    tool_calls: None,
                 }],
                 &opts(),
             )
@@ -207,7 +282,6 @@ mod tests {
 
     #[tokio::test]
     async fn unreachable_maps_to_unreachable() {
-        // Port 1 is (practically) never open on loopback.
         let c = OpenAiCompatClient::new(OpenAiCompatConfig {
             base_url: "http://127.0.0.1:1".into(),
             api_key: None,

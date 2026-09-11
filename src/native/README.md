@@ -12,6 +12,7 @@ src/native/
   src/ai/                local models: provider trait · openai_compat client ·
                          ollama + llamacpp presets · chat route
   src/chat/               sessions · messages · actions · selection (per user)
+  src/harness/            computer-use sandbox: context · tools · exec · agent loop
   src/platform/          shared SQLite setup (each domain owns its schema)
 ```
 
@@ -32,6 +33,27 @@ src/native/
   (detail includes messages + actions).
 - Actions (executor hook): `GET /v1/actions?session_id=`,
   `POST /v1/actions`, `PATCH /v1/actions/{id}`. All user-scoped.
+
+## Harness (computer use)
+
+The model never touches the OS. Per run it receives a fresh `SystemContext`
+(OS/version, X11/Wayland session, focused app, input capabilities via
+sysinfo + active-win-pos-rs) plus an OS-specific interaction guide, then
+reasons in an agent loop (`POST /v1/ai/run`) over one OpenAI-style `tools`
+array that works for Ollama and llama.cpp (`--jinja`).
+
+- Catalog (closed): `get_system_context`, `list_processes` (read-only),
+  `open_app` (low), `press_key` (medium, key allowlist), `type_text`
+  (high, needs `HARNESS_ALLOW_RISKY=1`).
+- Execution is the sandbox: unknown tools, bad args and policy blocks fail
+  as results. Input via enigo (X11 full; Wayland restricted by design —
+  attempted once, reported honestly). App launching via per-OS spawn
+  (PATH / `open -a` / `start`), never a shell.
+- Portability: the Windows/macOS branches are minimal std-only code paths
+  (reviewed, not compiled here — cross-checking needs mingw/mac SDKs, i.e.
+  CI). Wayland input stays experimental upstream and is intentionally off.
+- Only mutating tools become Action rows (read-only stays in the run
+  trace); every step returns `{tool, ok, action_id}` in the run response.
 
 ## Security notes
 

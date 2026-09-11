@@ -5,7 +5,9 @@
 //! Override with LLAMACPP_URL / LLAMACPP_MODEL.
 use super::{
     openai_compat::{OpenAiCompatClient, OpenAiCompatConfig},
-    provider::{ChatMessage, ChatOptions, ChatResponse, LlmProvider, ProviderError},
+    provider::{
+        ChatMessage, ChatOptions, ChatResponse, LlmProvider, ProviderError, ToolChatResponse,
+    },
 };
 
 pub struct LlamaCpp {
@@ -62,6 +64,15 @@ impl LlmProvider for LlamaCpp {
         opts: &ChatOptions,
     ) -> Result<ChatResponse, ProviderError> {
         self.client.chat(messages, opts).await
+    }
+
+    async fn chat_with_tools(
+        &self,
+        messages: Vec<ChatMessage>,
+        opts: &ChatOptions,
+        tools: &[serde_json::Value],
+    ) -> Result<ToolChatResponse, ProviderError> {
+        self.client.chat_with_tools(messages, opts, tools).await
     }
 
     async fn models(&self) -> Result<Vec<String>, ProviderError> {
