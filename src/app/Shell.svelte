@@ -19,12 +19,14 @@
   });
 </script>
 
-<div class="dot-bg min-h-screen">
-  <div class="mx-auto flex min-h-screen max-w-7xl flex-col px-4 md:px-6">
+<div class="dot-bg min-h-dvh lg:h-dvh lg:overflow-hidden">
+  <div
+    class="mx-auto flex min-h-dvh max-w-7xl flex-col px-4 md:px-6 lg:h-full lg:min-h-0"
+  >
     <TopBar onSettings={() => (view = "settings")} />
     {#if view === "main"}
       <div
-        class="grid flex-1 gap-4 pb-8 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_300px]"
+        class="grid flex-1 gap-4 pb-4 md:pb-8 lg:min-h-0 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_300px]"
       >
         <div class="pane-a flex min-h-0 flex-col">
           <EventsFeed />
@@ -37,7 +39,7 @@
         </div>
       </div>
     {:else}
-      <div class="pb-8">
+      <div class="min-h-0 flex-1 pb-8 lg:overflow-y-auto">
         <SettingsPage onBack={() => (view = "main")} />
       </div>
     {/if}

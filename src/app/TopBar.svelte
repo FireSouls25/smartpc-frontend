@@ -24,7 +24,7 @@
   }}
 />
 
-<header class="flex items-center justify-between gap-3 py-4">
+<header class="flex shrink-0 items-center justify-between gap-3 py-4">
   <div class="flex items-center gap-2.5">
     <Logo />
     <div>

@@ -10,6 +10,19 @@
     thinking: t("orb.thinking"),
   });
 
+  let scrollEl: HTMLDivElement | null = null;
+
+  // Follow the conversation while the user stays near the bottom;
+  // never yank them away when they scrolled up to read history.
+  $effect(() => {
+    void assistant.messages.length;
+    const el = scrollEl;
+    if (!el) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) {
+      el.scrollTo({ top: el.scrollHeight });
+    }
+  });
+
   function submit(e: SubmitEvent) {
     e.preventDefault();
     void assistant.send(assistant.draft);
@@ -26,8 +39,9 @@
     />
   </div>
 
-  <div class="card-xl flex min-h-[320px] min-h-0 flex-1 flex-col gap-3">
+  <div class="card-xl flex min-h-0 flex-1 flex-col gap-3">
     <div
+      bind:this={scrollEl}
       class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto"
       aria-live="polite"
     >
