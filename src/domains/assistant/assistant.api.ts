@@ -8,6 +8,7 @@ export interface ProviderInfo {
   models: string[];
   default_model: string;
   needs_key: boolean;
+  context_window: number | null;
 }
 
 export interface KeyStatus {
@@ -66,6 +67,7 @@ export interface RunResponse {
   provider: string;
   session_id: string;
   steps: RunStep[];
+  context: { used_tokens: number; window: number | null };
 }
 
 export const aiApi = {

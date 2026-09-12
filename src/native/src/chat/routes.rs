@@ -237,7 +237,7 @@ pub async fn chat(
         Ok(v) => v,
         Err(r) => return r,
     };
-    let provider = match provider_with_key(&prov_name, &uid) {
+    let mut provider = match provider_with_key(&prov_name, &uid) {
         Ok(p) => p,
         Err(e) => return e,
     };
@@ -276,6 +276,8 @@ pub async fn chat(
 
     // Store the user message and snapshot a slimmed history for the model.
     // The lock is released before any await.
+    // Session affinity: Zen routes per conversation id.
+    provider.set_session_id(Some(session_id.clone()));
     let history: Vec<LlmMessage> = {
         let store = match lock_chat(&s) {
             Ok(g) => g,
@@ -296,6 +298,7 @@ fn resolve_for_chat(
 ) -> Result<(String, String), Response> {
     let prov_name = non_empty(&b.provider).unwrap_or_else(|| {
         persisted
+            .as_ref()
             .map(|p| p.provider.clone())
             .unwrap_or_else(|| "ollama".into())
     });
@@ -674,7 +677,7 @@ pub async fn run(
             .map(|p| p.provider.clone())
             .unwrap_or_else(|| "ollama".into())
     });
-    let provider = match provider_with_key(&prov_name, &uid) {
+    let mut provider = match provider_with_key(&prov_name, &uid) {
         Ok(p) => p,
         Err(e) => return e,
     };
@@ -719,6 +722,10 @@ pub async fn run(
         }
     };
 
+    // Session affinity: Zen routes per conversation id (MissingSessionID
+    // without it). The provider forwards it as `x-opencode-session`.
+    provider.set_session_id(Some(session_id.clone()));
+
     let history: Vec<LlmMessage> = {
         let store = match lock_chat(&s) {
             Ok(g) => g,
@@ -744,6 +751,16 @@ pub async fn run(
         user_id: uid.clone(),
     };
     let policy = crate::harness::exec::Policy::from_env();
+    // Context meter for the UI badge: rough sent-tokens (chars/4) of system
+    // + history + tool schemas for the first agent turn.
+    let schema_chars: usize = crate::harness::tools::openai_schemas()
+        .iter()
+        .map(|v| v.to_string().len())
+        .sum();
+    let sent_chars =
+        system.len() + history.iter().map(|m| m.content.len()).sum::<usize>() + schema_chars;
+    let ctx_used = (sent_chars / 4) as u32;
+    let ctx_window = provider.context_window();
     let (reply, trace, tool_turns) = match crate::harness::agent::run_loop(
         &provider, &model, history, &system, &sink, &policy, 6,
     )
@@ -797,6 +814,7 @@ pub async fn run(
         Json(serde_json::json!({
             "reply": reply, "model": model, "provider": provider.name(),
             "session_id": session_id, "steps": trace,
+            "context": { "used_tokens": ctx_used, "window": ctx_window },
         })),
     )
         .into_response()
@@ -874,8 +892,10 @@ pub async fn save_key(
         )
             .into_response();
     }
-    match super::super::ai::opencode::OpenCodeCompat::verify_key(&candidate).await {
-        Ok(()) => {}
+    let verified_model = match super::super::ai::opencode::OpenCodeCompat::verify_key(&candidate)
+        .await
+    {
+        Ok(m) => m,
         Err(super::super::ai::opencode::VerifyError::InvalidKey) => {
             return (
                 StatusCode::BAD_REQUEST,
@@ -904,14 +924,18 @@ pub async fn save_key(
             )
                 .into_response();
         }
-    }
+    };
     // The key just verified: read the live catalog now so the UI can offer
     // every available model instead of a hardcoded one. The catalog is
     // public; a failed read degrades to an empty list, never to an error.
     let (models, suggested) = match super::super::ai::opencode::OpenCodeCompat::new() {
         Ok(p) => match p.models().await {
             Ok(m) => {
-                let s = super::super::ai::opencode::OpenCodeCompat::suggested_model(&m);
+                // Prefer the model that just answered cleanly with this
+                // key; fall back to the catalog suggestion.
+                let s = verified_model
+                    .filter(|v| m.contains(v))
+                    .or_else(|| super::super::ai::opencode::OpenCodeCompat::suggested_model(&m));
                 (m, s)
             }
             Err(_) => (vec![], None),

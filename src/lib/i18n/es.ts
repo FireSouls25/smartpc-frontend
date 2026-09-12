@@ -61,6 +61,7 @@ export const es = {
   "settings.diagCopy": "Copiar",
   "settings.diagCopied": "Copiado",
   "settings.diagEmpty": "Sin eventos todavía. Prueba verificar una clave o pedir algo.",
+  "context.label": "Contexto",
   "topbar.settings": "Ajustes",
   "protocol.mismatch":
     "El backend local no coincide con esta interfaz: recompila el sidecar (cargo build) y reinicia la app.",

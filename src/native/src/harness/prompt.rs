@@ -2,6 +2,7 @@
 //! Rendered fresh on every run so the model always reasons with current
 //! facts (focused app, session, input capabilities).
 use super::context::SystemContext;
+use super::tools::catalog;
 
 /// NOTE (measured 2026-09, gemma-class small models): keep mapping-style
 /// examples ('X' → tool) OUT of both the prompt and the tool descriptions.
@@ -41,6 +42,50 @@ CURRENT MACHINE\n\
         guide = os_guide(&ctx.os, &ctx.session),
         rendered = super::context::render(ctx),
     )
+}
+
+/// Tool instructions for models WITHOUT native function calling (Zen free
+/// tier): they act by emitting fenced JSON blocks, which the agent loop
+/// parses and executes. Rendered from the live catalog so names/args can
+/// never drift from what `exec` accepts. `*` marks required arguments.
+pub fn text_tool_guide() -> String {
+    let mut out = String::from(
+        "TEXT TOOL MODE (your API has no function calling — follow exactly)\n\
+         You act ONLY by emitting fenced calls. To act, output one or more blocks like this, with short prose at most:\n\
+         ```tool\n\
+         {\"name\": \"<tool>\", \"arguments\": {<args>}}\n\
+         ```\n\
+         One action per block, at most 3 blocks per reply. `arguments` must be a JSON object ({} when the tool takes none). Unknown names are ignored. After tool results arrive, keep going until done, then summarize. Never claim an action without a result. Never emit bare tool names. Prefer the keys \"name\" and \"arguments\".\n\
+         \n\
+         TOOLS\n",
+    );
+    for t in catalog() {
+        let required: Vec<&str> = t
+            .parameters
+            .get("required")
+            .and_then(|r| r.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+        let mut args = vec![];
+        if let Some(map) = t.parameters.get("properties").and_then(|p| p.as_object()) {
+            for (k, v) in map {
+                let ty = v.get("type").and_then(|x| x.as_str()).unwrap_or("?");
+                let star = if required.iter().any(|r| r == k) {
+                    "*"
+                } else {
+                    ""
+                };
+                args.push(format!("{k}{star}: {ty}"));
+            }
+        }
+        let arglist = if args.is_empty() {
+            "no arguments".to_string()
+        } else {
+            args.join(", ")
+        };
+        out.push_str(&format!("- {}({}): {}\n", t.name, arglist, t.description));
+    }
+    out
 }
 
 fn os_guide(os: &str, session: &str) -> &'static str {
@@ -111,5 +156,14 @@ mod tests {
             system_prompt(&ctx, "es")
         );
         assert!(!system_prompt(&ctx, "es").is_empty());
+    }
+
+    #[test]
+    fn text_guide_lists_every_tool() {
+        let g = text_tool_guide();
+        for t in crate::harness::tools::catalog() {
+            assert!(g.contains(t.name), "guide missing {}", t.name);
+        }
+        assert!(g.contains("```tool"));
     }
 }

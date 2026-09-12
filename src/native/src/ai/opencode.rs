@@ -27,6 +27,7 @@ impl OpenCodeCompat {
                 base_url: env_or("OPENCODE_URL", BASE_URL),
                 api_key: key,
                 timeout_secs: 180,
+                options: None,
             })?,
             model: env_or("OPENCODE_MODEL", ""),
         })
@@ -49,6 +50,19 @@ impl OpenCodeCompat {
         ids.sort();
         ids
     }
+
+    /// Free-tier Zen models declare no tool support: sending `tools` fails
+    /// the whole request upstream, so strip them up front and answer plain
+    /// (the agent loop already handles tool-less replies).
+    const NO_TOOL_IDS: &[&str] = &[
+        "big-pickle",
+        "hy3-free",
+        "laguna-s-2.1-free",
+        "mimo-v2.5-free",
+        "nemotron-3-ultra-free",
+        "nemotron-3.5-lightning-free",
+        "deepseek-v4-flash-free",
+    ];
 
     /// Model families served by POST /chat/completions (per the Zen docs).
     /// Other families live on different endpoints (`gpt-*`/Muse Spark on
@@ -97,7 +111,7 @@ impl OpenCodeCompat {
             }
         }
         chatty.extend(rest);
-        chatty.truncate(6);
+        chatty.truncate(10);
         chatty
     }
 
@@ -118,9 +132,13 @@ impl OpenCodeCompat {
     }
 
     /// Prove a candidate key with the cheapest possible live call.
-    /// Precedence at the end: any 200 wins; else any 401/403 means bad key;
-    /// else connectivity trouble; else inconclusive (never false "invalid").
-    pub async fn verify_key(key: &str) -> Result<(), VerifyError> {
+    /// Returns the first model that answered cleanly (Some), or None when
+    /// the key was accepted but no model gave a clean 200.
+    /// Precedence at the end: any 200 wins; else any past-auth response
+    /// (400/404/429/5xx — the gateway checked the key and moved on) means
+    /// the key is good; else any 401/403 means bad key; else connectivity
+    /// trouble; else inconclusive (never false "invalid").
+    pub async fn verify_key(key: &str) -> Result<Option<String>, VerifyError> {
         use super::provider::Provider;
         let catalog = Self::with_key(None)
             .map_err(|e| VerifyError::Inconclusive(format!("setup failed: {e:?}")))?
@@ -139,14 +157,19 @@ impl OpenCodeCompat {
         }
         let mut saw_auth_failure = false;
         let mut saw_connect_failure: Option<String> = None;
+        // First model whose failure is NOT auth-shaped: the gateway checked
+        // the key and moved on (per-model entitlement, request shape…).
+        let mut saw_past_auth: Option<String> = None;
         for (i, model) in candidates.iter().enumerate() {
             // Space attempts out: the gateway has bot protection that
             // flaps under rapid bursts (HTML 404s instead of API errors).
             if i > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(400)).await;
             }
-            let keyed = Provider::resolve_with_key("opencode", Some(key.to_string()))
+            let mut keyed = Provider::resolve_with_key("opencode", Some(key.to_string()))
                 .map_err(|e| VerifyError::Inconclusive(format!("setup failed: {e:?}")))?;
+            // Verify calls are one throwaway conversation for routing.
+            keyed.set_session_id(Some("verify".into()));
             let opts = ChatOptions {
                 model: model.clone(),
                 temperature: Some(0.0),
@@ -164,17 +187,20 @@ impl OpenCodeCompat {
             match keyed.chat(vec![msg], &opts).await {
                 Ok(_) => {
                     crate::diagnostics::push(format!("verify opencode: {model} ok"));
-                    return Ok(());
+                    return Ok(Some(model.clone()));
                 }
                 Err(ProviderError::Status(401, _)) | Err(ProviderError::Status(403, _)) => {
                     crate::diagnostics::push(format!("verify opencode: {model} rejected (auth)"));
                     saw_auth_failure = true;
                 }
-                Err(ProviderError::Status(404, body)) => {
+                Err(ProviderError::Status(code, body)) => {
                     crate::diagnostics::push(format!(
-                        "verify opencode: {model} http 404 {}",
-                        body.chars().take(60).collect::<String>()
+                        "verify opencode: {model} http {code} {}",
+                        body.chars().take(120).collect::<String>()
                     ));
+                    if saw_past_auth.is_none() {
+                        saw_past_auth = Some(format!("{model}:{code}"));
+                    }
                 }
                 Err(ProviderError::Unreachable(msg)) => {
                     crate::diagnostics::push("verify opencode: unreachable".into());
@@ -188,7 +214,13 @@ impl OpenCodeCompat {
                 }
             }
         }
-        if saw_auth_failure {
+        if saw_past_auth.is_some() {
+            crate::diagnostics::push(format!(
+                "verify opencode: verdict=accepted ({})",
+                saw_past_auth.as_deref().unwrap_or("?")
+            ));
+            Ok(None)
+        } else if saw_auth_failure {
             crate::diagnostics::push("verify opencode: verdict=invalid_key".into());
             Err(VerifyError::InvalidKey)
         } else if let Some(msg) = saw_connect_failure {
@@ -223,6 +255,14 @@ impl LlmProvider for OpenCodeCompat {
         self.client.set_api_key(key);
     }
 
+    fn set_session_id(&mut self, id: Option<String>) {
+        self.client.set_session_id(id);
+    }
+
+    fn supports_tools(&self, model: &str) -> bool {
+        !Self::NO_TOOL_IDS.iter().any(|id| *id == model)
+    }
+
     async fn chat(
         &self,
         messages: Vec<ChatMessage>,
@@ -237,6 +277,13 @@ impl LlmProvider for OpenCodeCompat {
         opts: &ChatOptions,
         tools: &[serde_json::Value],
     ) -> Result<super::provider::ToolChatResponse, ProviderError> {
+        if Self::NO_TOOL_IDS.iter().any(|id| *id == opts.model) {
+            let plain = self.client.chat(messages, opts).await?;
+            return Ok(super::provider::ToolChatResponse {
+                text: plain.text,
+                tool_calls: vec![],
+            });
+        }
         self.client.chat_with_tools(messages, opts, tools).await
     }
 

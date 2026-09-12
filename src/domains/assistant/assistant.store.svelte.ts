@@ -36,6 +36,8 @@ let keyBusy = $state(false);
 let keyError = $state("");
 let activeProvider = $state("ollama");
 let activeModel = $state("");
+let contextUsed = $state(0);
+let contextWindow = $state<number | null>(null);
 let gesturesOn = $state<boolean>(true);
 let draft = $state("");
 let voiceError = $state("");
@@ -45,6 +47,11 @@ let recognition: any = null;
 function defaultModelFor(list: ProviderInfo[], id: string): string {
   const p = list.find((x) => x.id === id);
   return p?.default_model || p?.models[0] || "";
+}
+
+function syncContextWindow(): void {
+  contextWindow =
+    providers.find((p) => p.id === activeProvider)?.context_window ?? null;
 }
 
 function toEvent(a: {
@@ -76,6 +83,7 @@ async function loadProviders(): Promise<void> {
     } catch {
       /* first run: no selection stored yet */
     }
+    syncContextWindow();
   } catch (err) {
     providersError = err instanceof Error ? err.message : "Error";
   } finally {
@@ -98,6 +106,7 @@ async function selectProvider(id: string, model?: string | null): Promise<void> 
     const res = await aiApi.select(id, model ?? undefined);
     activeProvider = res.provider;
     activeModel = res.model || defaultModelFor(providers, activeProvider);
+    syncContextWindow();
   } catch (err) {
     selectError = err instanceof Error ? err.message : "Error";
   }
@@ -227,6 +236,8 @@ async function send(text: string): Promise<void> {
   try {
     const res = await aiApi.run(clean, activeSessionId, { lang: getLang() });
     activeSessionId = res.session_id;
+    contextUsed = res.context.used_tokens;
+    if (res.context.window != null) contextWindow = res.context.window;
     const d = await aiApi.sessionDetail(res.session_id);
     const steps = (res.steps ?? []).map((s) => ({ tool: s.tool, ok: s.ok }));
     // Machine turns (role "tool") never render as chat bubbles: without
@@ -363,6 +374,12 @@ export const assistant = {
   },
   get activeModel(): string {
     return activeModel;
+  },
+  get contextUsed(): number {
+    return contextUsed;
+  },
+  get contextWindow(): number | null {
+    return contextWindow;
   },
   activeModels,
   activeAvailable,

@@ -21,10 +21,51 @@
     if (status === "failed") return t("events.failed");
     return "✓ " + t("events.done");
   }
+
+  function fmtK(n: number): string {
+    return n >= 1000 ? `${(n / 1000).toFixed(1)}K` : `${n}`;
+  }
+
+  function ctxPct(): number {
+    const w = assistant.contextWindow;
+    if (w == null || w <= 0) return 0;
+    return Math.min(100, (assistant.contextUsed / w) * 100);
+  }
+
+  function ctxColor(): string {
+    const p = ctxPct();
+    if (p >= 90) return "var(--danger)";
+    if (p >= 70) return "var(--warn)";
+    return "var(--accent)";
+  }
 </script>
 
 <aside class="card-xl flex h-full min-h-[240px] min-h-0 flex-col gap-3">
   <h2 class="px-1 text-sm font-bold">{t("events.title")}</h2>
+  <div
+    class="shrink-0 rounded-2xl border px-3 py-2"
+    style="border-color: var(--border); background: var(--bg);"
+  >
+    <div class="flex items-center justify-between gap-2">
+      <p class="text-[11px] font-bold">{t("context.label")}</p>
+      <p class="font-mono text-[11px]">
+        {fmtK(assistant.contextUsed)} / {assistant.contextWindow == null
+          ? "—"
+          : fmtK(assistant.contextWindow)}
+      </p>
+    </div>
+    {#if assistant.contextWindow != null}
+      <div
+        class="mt-1.5 h-1 overflow-hidden rounded-full"
+        style="background: var(--border);"
+      >
+        <div
+          class="h-full rounded-full transition-all"
+          style="width: {ctxPct()}%; background: {ctxColor()};"
+        ></div>
+      </div>
+    {/if}
+  </div>
   {#if assistant.events.length === 0}
     <p class="faint px-1 text-xs leading-relaxed">{t("events.empty")}</p>
   {/if}

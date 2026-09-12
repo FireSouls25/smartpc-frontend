@@ -13,12 +13,15 @@ pub struct OpenAiCompatConfig {
     pub base_url: String,
     pub api_key: Option<String>,
     pub timeout_secs: u64,
+    /// Extra top-level body fields (e.g. Ollama `options`). None omits it.
+    pub options: Option<serde_json::Value>,
 }
 
 #[derive(Clone)]
 pub struct OpenAiCompatClient {
     http: Client,
     config: OpenAiCompatConfig,
+    session_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -31,6 +34,8 @@ struct CompatRequest<'a> {
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     response_format: Option<ResponseFormat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    options: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -62,11 +67,29 @@ impl OpenAiCompatClient {
             .timeout(std::time::Duration::from_secs(config.timeout_secs.max(1)))
             .build()
             .map_err(|e| ProviderError::Misconfigured(format!("http client: {e}")))?;
-        Ok(Self { http, config })
+        Ok(Self {
+            http,
+            config,
+            session_id: None,
+        })
     }
 
     pub fn set_api_key(&mut self, key: Option<String>) {
         self.config.api_key = key;
+    }
+
+    pub fn set_session_id(&mut self, id: Option<String>) {
+        self.session_id = id.filter(|s| !s.trim().is_empty());
+    }
+
+    /// Zen requires `x-opencode-session: <stable-id-per-conversation>` on
+    /// chat requests (400 MissingSessionID without it). Providers that
+    /// never set a session id send no header.
+    fn with_session(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match self.session_id.as_deref() {
+            Some(id) => req.header("x-opencode-session", id),
+            None => req,
+        }
     }
 
     pub fn endpoint(&self) -> String {
@@ -90,7 +113,7 @@ impl OpenAiCompatClient {
             .build()
             .map_err(|e| ProviderError::Misconfigured(format!("http client: {e}")))?;
         let url = format!("{}{}", self.config.base_url.trim_end_matches('/'), path);
-        let mut req = client.get(url);
+        let mut req = self.with_session(client.get(url));
         if let Some(key) = self.config.api_key.as_deref().filter(|k| !k.is_empty()) {
             req = req.bearer_auth(key);
         }
@@ -123,8 +146,9 @@ impl OpenAiCompatClient {
             response_format: opts.json_mode.then_some(ResponseFormat {
                 kind: "json_object",
             }),
+            options: self.config.options.clone(),
         };
-        let mut req = self.http.post(self.endpoint()).json(&body);
+        let mut req = self.with_session(self.http.post(self.endpoint()).json(&body));
         if let Some(key) = self.config.api_key.as_deref().filter(|k| !k.is_empty()) {
             req = req.bearer_auth(key);
         }
@@ -176,6 +200,9 @@ impl OpenAiCompatClient {
             "model": &opts.model,
             "messages": messages,
         });
+        if let Some(o) = self.config.options.clone() {
+            body["options"] = o;
+        }
         if let Some(t) = opts.temperature {
             body["temperature"] = t.into();
         }
@@ -183,7 +210,7 @@ impl OpenAiCompatClient {
             body["max_tokens"] = m.into();
         }
         body["tools"] = serde_json::Value::Array(tools.to_vec());
-        let mut req = self.http.post(self.endpoint()).json(&body);
+        let mut req = self.with_session(self.http.post(self.endpoint()).json(&body));
         if let Some(key) = self.config.api_key.as_deref().filter(|k| !k.is_empty()) {
             req = req.bearer_auth(key);
         }
@@ -261,6 +288,7 @@ mod tests {
             base_url: format!("http://127.0.0.1:{port}"),
             api_key: None,
             timeout_secs: 5,
+            options: None,
         })
         .unwrap()
     }
@@ -280,6 +308,7 @@ mod tests {
             base_url: "https://opencode.ai/zen/v1".into(),
             api_key: None,
             timeout_secs: 5,
+            options: None,
         })
         .unwrap();
         assert_eq!(
@@ -290,6 +319,7 @@ mod tests {
             base_url: "http://127.0.0.1:11434/".into(),
             api_key: None,
             timeout_secs: 5,
+            options: None,
         })
         .unwrap();
         assert_eq!(
@@ -316,11 +346,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sends_session_header_when_set() {
+        use axum::http::{HeaderMap, StatusCode};
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(|headers: HeaderMap, Json(_): Json<Value>| async move {
+                if headers
+                    .get("x-opencode-session")
+                    .is_some_and(|v| v == "ses-test")
+                {
+                    Ok(Json(
+                        json!({"choices": [{"message": {"role": "assistant", "content": "ok"}}]}),
+                    ))
+                } else {
+                    Err(StatusCode::BAD_REQUEST)
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let msg = || ChatMessage {
+            role: super::super::provider::Role::User,
+            content: "hi".into(),
+            tool_calls: None,
+        };
+        // Without a session id: no header, gateway-style 400.
+        let bare = client_for(port);
+        assert!(matches!(
+            bare.chat(vec![msg()], &opts()).await,
+            Err(ProviderError::Status(400, _))
+        ));
+        // With one: header present, clean 200.
+        let mut keyed = client_for(port);
+        keyed.set_session_id(Some("ses-test".into()));
+        let res = keyed.chat(vec![msg()], &opts()).await.unwrap();
+        assert_eq!(res.text, "ok");
+    }
+
+    #[tokio::test]
+    async fn options_reach_the_wire() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<Value>();
+        let tx = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post({
+                let tx = tx.clone();
+                move |Json(body): Json<Value>| async move {
+                    if let Some(tx) = tx.lock().unwrap().take() {
+                        let _ = tx.send(body);
+                    }
+                    Json(json!({"choices": [{"message": {"role": "assistant", "content": "ok"}}]}))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let c = OpenAiCompatClient::new(OpenAiCompatConfig {
+            base_url: format!("http://127.0.0.1:{port}"),
+            api_key: None,
+            timeout_secs: 5,
+            options: Some(json!({ "num_ctx": 8192 })),
+        })
+        .unwrap();
+        c.chat(
+            vec![ChatMessage {
+                role: super::super::provider::Role::User,
+                content: "hi".into(),
+                tool_calls: None,
+            }],
+            &opts(),
+        )
+        .await
+        .unwrap();
+        let body = rx.await.unwrap();
+        assert_eq!(body["options"]["num_ctx"], 8192);
+    }
+
+    #[tokio::test]
     async fn unreachable_maps_to_unreachable() {
         let c = OpenAiCompatClient::new(OpenAiCompatConfig {
             base_url: "http://127.0.0.1:1".into(),
             api_key: None,
             timeout_secs: 2,
+            options: None,
         })
         .unwrap();
         assert!(matches!(

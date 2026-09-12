@@ -163,6 +163,15 @@ pub trait LlmProvider: Send + Sync {
     /// Swap credentials post-construction (keyed providers resolve first,
     /// then receive the user's key). Default: ignored.
     fn set_api_key(&mut self, _key: Option<String>) {}
+    /// Stable conversation id for gateways with session affinity
+    /// (Zen requires `x-opencode-session`). Default: ignored.
+    fn set_session_id(&mut self, _id: Option<String>) {}
+    /// Native function calling for `model`. False for vendors/models without
+    /// tool support (Zen free tier): the agent falls back to text-embedded
+    /// calls. Default: true.
+    fn supports_tools(&self, _model: &str) -> bool {
+        true
+    }
     fn chat(
         &self,
         messages: Vec<ChatMessage>,
@@ -209,6 +218,15 @@ impl Provider {
         }
     }
 
+    /// Stable conversation id (see [`LlmProvider::set_session_id`]).
+    pub fn set_session_id(&mut self, id: Option<String>) {
+        match self {
+            Self::Ollama(p) => p.set_session_id(id),
+            Self::LlamaCpp(p) => p.set_session_id(id),
+            Self::OpenCode(p) => p.set_session_id(id),
+        }
+    }
+
     /// Providers that cannot do anything useful without a user key.
     pub fn requires_key(&self) -> bool {
         matches!(self, Self::OpenCode(_))
@@ -221,6 +239,15 @@ impl Provider {
             return Err(ProviderError::MissingModel);
         }
         Ok(())
+    }
+
+    /// Effective context window in tokens, when the provider reports one
+    /// (Ollama: our configured num_ctx). Feeds the UI context meter.
+    pub fn context_window(&self) -> Option<u32> {
+        match self {
+            Self::Ollama(p) => Some(p.context_window()),
+            Self::LlamaCpp(_) | Self::OpenCode(_) => None,
+        }
     }
 
     pub fn name(&self) -> &'static str {

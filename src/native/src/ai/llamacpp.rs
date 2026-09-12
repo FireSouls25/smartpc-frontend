@@ -29,6 +29,7 @@ impl LlamaCpp {
                 base_url: env_or("LLAMACPP_URL", "http://127.0.0.1:8080"),
                 api_key: None,
                 timeout_secs: 180,
+                options: None,
             })?,
             model: env_or("LLAMACPP_MODEL", "default"),
         })

@@ -31,18 +31,18 @@ async fn probe(id: &str) -> serde_json::Value {
             Ok(models) => serde_json::json!({
                 "id": id, "name": p.name(), "available": true,
                 "models": models, "default_model": p.default_model(),
-                "needs_key": needs_key(id),
+                "needs_key": needs_key(id), "context_window": p.context_window(),
             }),
             Err(_) => serde_json::json!({
                 "id": id, "name": p.name(), "available": false,
                 "models": [], "default_model": p.default_model(),
-                "needs_key": needs_key(id),
+                "needs_key": needs_key(id), "context_window": p.context_window(),
             }),
         },
         Err(_) => serde_json::json!({
             "id": id, "name": id, "available": false,
             "models": [], "default_model": "",
-            "needs_key": needs_key(id),
+            "needs_key": needs_key(id), "context_window": null,
         }),
     }
 }
