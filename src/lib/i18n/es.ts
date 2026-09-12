@@ -15,8 +15,6 @@ export const es = {
   "auth.deleteAsk":
     "¿Eliminar tu cuenta para siempre? Esta acción no se puede deshacer.",
   "common.loading": "Cargando…",
-  "common.soon": "Próximamente",
-  "common.soonDesc": "Esta sección llegará en la siguiente iteración.",
   "common.theme": "Tema",
   "common.light": "Claro",
   "common.dark": "Oscuro",
@@ -24,7 +22,6 @@ export const es = {
   "orb.idle": "En reposo",
   "orb.listening": "Escuchando",
   "orb.thinking": "Pensando",
-  "chat.title": "Asistente",
   "chat.placeholder": "Pídele algo a tu PC…",
   "chat.send": "Enviar",
   "chat.provider": "Proveedor",
@@ -58,6 +55,8 @@ export const es = {
   "settings.providerNote": "Solo se pueden elegir proveedores detectados.",
   "settings.accountNote": "Tu sesión en este equipo.",
   "topbar.settings": "Ajustes",
+  "protocol.mismatch":
+    "El backend local no coincide con esta interfaz: recompila el sidecar (cargo build) y reinicia la app.",
 } as const;
 
 export type I18nKey = keyof typeof es;

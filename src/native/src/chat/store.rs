@@ -77,8 +77,8 @@ impl ChatStore {
         let mut stmt = self.conn.prepare(
             "SELECT s.id, s.title, s.provider, s.model, s.updated_at,
                (SELECT m.content FROM chat_messages m
-                WHERE m.session_id = s.id ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1),
-               (SELECT COUNT(*) FROM chat_messages m WHERE m.session_id = s.id)
+                WHERE m.session_id = s.id AND m.role != 'tool' ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1),
+               (SELECT COUNT(*) FROM chat_messages m WHERE m.session_id = s.id AND m.role != 'tool')
              FROM chat_sessions s WHERE s.user_id = ?1
              ORDER BY s.updated_at DESC, s.rowid DESC LIMIT 100",
         )?;

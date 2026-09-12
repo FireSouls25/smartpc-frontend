@@ -41,13 +41,20 @@ fn title_for(tool: &str, args: &serde_json::Value) -> String {
     }
 }
 
-fn preview(s: &str) -> String {
-    const N: usize = 300;
-    if s.len() <= N {
+fn truncate_chars(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
         s.to_string()
     } else {
-        format!("{}…", &s[..N])
+        format!("{}…", s.chars().take(n).collect::<String>())
     }
+}
+
+fn preview(s: &str) -> String {
+    truncate_chars(s, 300)
+}
+
+fn debug_enabled() -> bool {
+    std::env::var("HARNESS_DEBUG").ok().as_deref() == Some("1")
 }
 
 fn assistant_echo(text: &str, calls: &[crate::ai::provider::ToolCall]) -> ChatMessage {
@@ -108,7 +115,7 @@ pub async fn run_loop<P: LlmProvider>(
     sink: &dyn ActionSink,
     policy: &Policy,
     max_iters: usize,
-) -> Result<(String, Vec<TraceStep>), ProviderError> {
+) -> Result<(String, Vec<TraceStep>, Vec<ChatMessage>), ProviderError> {
     let mut messages = Vec::with_capacity(history.len() + 1);
     messages.push(ChatMessage {
         role: Role::System,
@@ -119,21 +126,33 @@ pub async fn run_loop<P: LlmProvider>(
 
     let opts = ChatOptions {
         model: model.to_string(),
-        temperature: None,
+        // Low temperature: agentic runs want instruction compliance
+        // (tool discipline), not creativity.
+        temperature: Some(0.2),
         max_tokens: None,
         json_mode: false,
     };
     let schemas = tools::openai_schemas();
     let mut trace = Vec::new();
+    let mut tool_turns = Vec::new();
     let mut last_text = String::new();
     let mut iters = 0usize;
 
     loop {
+        if debug_enabled() {
+            let last_user = messages
+                .iter()
+                .rev()
+                .find(|m| matches!(m.role, Role::User))
+                .map(|m| truncate_chars(&m.content, 160))
+                .unwrap_or_default();
+            eprintln!("[agent:debug] iter={iters} user_msg={last_user:?}");
+        }
         if iters >= max_iters {
             if last_text.trim().is_empty() {
                 last_text = "Alcancé el límite de pasos con trabajo pendiente.".to_string();
             }
-            return Ok((last_text, trace));
+            return Ok((last_text, trace, tool_turns));
         }
         iters += 1;
 
@@ -145,15 +164,30 @@ pub async fn run_loop<P: LlmProvider>(
             Err(e) if is_tools_rejection(&e) => {
                 // Provider chokes on the tools array: one plain retry,
                 // then whatever comes back is final.
+                eprintln!("[agent] tools rejected, plain retry: {e:?}");
                 let plain: ChatResponse = provider.chat(messages.clone(), &opts).await?;
-                return Ok((plain.text, trace));
+                return Ok((plain.text, trace, tool_turns));
             }
             Err(e) => return Err(e),
         };
         last_text = resp.text.clone();
+        if debug_enabled() {
+            eprintln!(
+                "[agent:debug] iter={iters} text={:?} calls={:?}",
+                truncate_chars(&resp.text, 160),
+                resp.tool_calls
+                    .iter()
+                    .map(|c| format!(
+                        "{}:{}",
+                        c.function.name,
+                        truncate_chars(&c.function.arguments.as_string(), 120)
+                    ))
+                    .collect::<Vec<_>>(),
+            );
+        }
 
         if resp.tool_calls.is_empty() {
-            return Ok((resp.text, trace));
+            return Ok((resp.text, trace, tool_turns));
         }
         messages.push(assistant_echo(&resp.text, &resp.tool_calls));
 
@@ -172,11 +206,12 @@ pub async fn run_loop<P: LlmProvider>(
                 ok: outcome.ok,
                 output_preview: preview(&outcome.output),
             });
-            messages.push(tool_message(&tc.id, &tc.function.name, &outcome));
+            let turn = tool_message(&tc.id, &tc.function.name, &outcome);
+            messages.push(turn.clone());
+            tool_turns.push(turn);
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,7 +312,7 @@ mod tests {
             finished: Mutex::new(vec![]),
         };
         let policy = Policy { allow_risky: false };
-        let (reply, trace) = run_loop(
+        let (reply, trace, tool_turns) = run_loop(
             &fake,
             "fake-1",
             vec![ChatMessage {
@@ -296,6 +331,13 @@ mod tests {
         assert_eq!(trace.len(), 1);
         assert_eq!(trace[0].tool, "get_system_context");
         assert!(trace[0].ok);
+        assert!(trace[0].output_preview.contains("\"os\""));
+        // The tool turn is returned for persistence (role "tool").
+        assert_eq!(tool_turns.len(), 1);
+        assert!(matches!(
+            tool_turns[0].role,
+            crate::ai::provider::Role::Tool
+        ));
         assert!(trace[0].output_preview.contains("\"os\""));
         // Read-only: traced, but no Action row.
         assert!(trace[0].action_id.is_none());

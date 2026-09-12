@@ -8,8 +8,19 @@
   import CenterPanel from "../domains/assistant/CenterPanel.svelte";
   import SessionsPane from "../domains/assistant/SessionsPane.svelte";
   import SettingsPage from "../domains/settings/SettingsPage.svelte";
+  import { fetchHealth, SIDECAR_PROTOCOL } from "../lib/api";
+  import { t } from "../lib/i18n.svelte";
 
   let view = $state<"main" | "settings">("main");
+  let protoOk = $state(true);
+
+  onMount(() => {
+    fetchHealth()
+      .then((h) => {
+        protoOk = h.protocol === SIDECAR_PROTOCOL;
+      })
+      .catch(() => {});
+  });
 
   onMount(() => {
     if (!auth.user) navigate("login");
@@ -23,6 +34,14 @@
   <div
     class="mx-auto flex min-h-dvh max-w-7xl flex-col px-4 md:px-6 lg:h-full lg:min-h-0"
   >
+    {#if !protoOk}
+      <div
+        class="mb-3 rounded-2xl border p-3 text-center text-sm font-semibold"
+        style="border-color: var(--danger); color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent);"
+      >
+        {t("protocol.mismatch")}
+      </div>
+    {/if}
     <TopBar onSettings={() => (view = "settings")} />
     {#if view === "main"}
       <div

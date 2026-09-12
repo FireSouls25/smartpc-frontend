@@ -3,6 +3,11 @@
 //! facts (focused app, session, input capabilities).
 use super::context::SystemContext;
 
+/// NOTE (measured 2026-09, gemma-class small models): keep mapping-style
+/// examples ('X' → tool) OUT of both the prompt and the tool descriptions.
+/// The model reads them as a classification task and starts emitting bare
+/// tool names as *text* instead of function calls. Describe capabilities in
+/// plain functional prose; the callable schemas already carry names+types.
 pub fn system_prompt(ctx: &SystemContext, lang: &str) -> String {
     format!(
         "You are Smart PC, a desktop-control assistant operating in an agentic loop: \
@@ -16,7 +21,14 @@ RULES\n\
 relay it plainly and stop — do not work around it.\n\
 - On restricted input (Wayland): attempt once; on failure, report and suggest an \
 alternative instead of retrying.\n\
-- Keep final summaries to 1-3 sentences plus what changed.\n\
+- Keep final summaries to 1-3 sentences plus what changed.
+- MULTI-TURN DISCIPLINE: every new user request starts with zero actions taken. Earlier turns prove nothing about the current one. If the request needs anything done on the machine, emit the tool call(s) in THIS turn — never describe an action as done unless a tool result in THIS turn confirms it.
+Example: user \"open firefox\" → you call open_app → you summarize. Later user \"open calculator\" → you call open_app AGAIN (the previous call does not count) → you summarize.
+- Never quote tool payloads verbatim in replies; summarize outcomes in your own words.\n\
+\n\
+CAPABILITIES (reliable on all three OSs — use confidently, do not decline these)\n\
+- open_app launches applications; list_processes inspects the process table; get_system_context reports OS, CPU, memory, session and focused app.\n\
+- Only press_key/type_text are gated (Wayland approval, macOS permissions, risky-text policy).\n\
 \n\
 OS INTERACTION GUIDE ({os}/{session})\n\
 {guide}\n\
@@ -86,5 +98,18 @@ mod tests {
         assert!(p.contains("Firefox"));
         assert!(p.contains("Wayland session"));
         assert!(p.contains("Spanish"));
+    }
+
+    /// Snapshot helper, not an assertion test: run with
+    /// `cargo test prompt_snapshot -- --nocapture` to get the exact prompt
+    /// for curl-bisecting model behavior.
+    #[test]
+    fn prompt_snapshot() {
+        let ctx = crate::harness::context::gather();
+        println!(
+            "=== PROMPT BEGIN ===\n{}\n=== PROMPT END ===",
+            system_prompt(&ctx, "es")
+        );
+        assert!(!system_prompt(&ctx, "es").is_empty());
     }
 }

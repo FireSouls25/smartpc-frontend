@@ -125,10 +125,13 @@ function newChat(): void {
 async function openSession(id: string): Promise<void> {
   const d = await aiApi.sessionDetail(id);
   activeSessionId = id;
-  messages = d.messages.map((m) => ({
-    role: m.role === "assistant" ? "assistant" : "user",
-    text: m.content,
-  }));
+  // Machine turns (role "tool") stay server-side; the chat shows people only.
+  messages = d.messages
+    .filter((m) => m.role !== "tool")
+    .map((m) => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      text: m.content,
+    }));
   events = d.actions.map(toEvent);
   // Adopt the session's combo so follow-ups keep its context.
   await selectProvider(d.session.provider, d.session.model);
@@ -165,11 +168,15 @@ async function send(text: string): Promise<void> {
     activeSessionId = res.session_id;
     const d = await aiApi.sessionDetail(res.session_id);
     const steps = (res.steps ?? []).map((s) => ({ tool: s.tool, ok: s.ok }));
-    messages = d.messages.map((m, i, arr) => ({
-      role: m.role === "assistant" ? "assistant" : "user",
-      text: m.content,
-      ...(i === arr.length - 1 && steps.length > 0 ? { steps } : {}),
-    }));
+    // Machine turns (role "tool") never render as chat bubbles: without
+    // this filter they show up as raw-JSON user messages.
+    messages = d.messages
+      .filter((m) => m.role !== "tool")
+      .map((m, i, arr) => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        text: m.content,
+        ...(i === arr.length - 1 && steps.length > 0 ? { steps } : {}),
+      }));
     events = d.actions.map(toEvent);
     await refreshSessions();
   } catch (err) {

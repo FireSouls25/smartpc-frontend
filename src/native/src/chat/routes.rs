@@ -14,7 +14,7 @@ use axum::{
 };
 use serde::Deserialize;
 
-use super::model::Selection;
+use super::model::{ChatMessageRow, Selection};
 use super::store::ChatStore;
 use crate::{
     ai::{
@@ -64,7 +64,6 @@ fn lock_chat(state: &AppState) -> Result<MutexGuard<'_, ChatStore>, Response> {
 fn non_empty(v: &Option<String>) -> Option<String> {
     v.clone().filter(|s| !s.trim().is_empty())
 }
-
 fn title_of(message: &str) -> String {
     let t: String = message
         .split_whitespace()
@@ -77,6 +76,52 @@ fn title_of(message: &str) -> String {
     } else {
         t
     }
+}
+
+/// History for the model: recent turns only, tool outputs truncated, total
+/// budget enforced. Long noisy histories degrade small-model instruction
+/// following (and eventually blow the context window), while the DB keeps
+/// everything for the UI.
+fn history_for_model(rows: Vec<ChatMessageRow>) -> Vec<LlmMessage> {
+    const TURNS: usize = 12;
+    const MAX_TOOL_CHARS: usize = 400;
+    const MAX_TOTAL_CHARS: usize = 6000;
+    let mut items: Vec<LlmMessage> = rows
+        .into_iter()
+        .rev()
+        .take(TURNS)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|m| {
+            let role = if m.role == "assistant" {
+                Role::Assistant
+            } else if m.role == "tool" {
+                Role::Tool
+            } else {
+                Role::User
+            };
+            let mut content = m.content;
+            if matches!(role, Role::Tool) && content.chars().count() > MAX_TOOL_CHARS {
+                content = format!(
+                    "{}…[truncated]",
+                    content.chars().take(MAX_TOOL_CHARS).collect::<String>()
+                );
+            }
+            LlmMessage {
+                role,
+                content,
+                tool_calls: None,
+            }
+        })
+        .collect();
+    // Enforce the total budget, always keeping the newest turn (the request).
+    let mut total: usize = items.iter().map(|m| m.content.len()).sum();
+    while items.len() > 2 && total > MAX_TOTAL_CHARS {
+        total -= items[0].content.len();
+        items.remove(0);
+    }
+    items
 }
 
 /// Current persisted selection (or the default when never chosen).
@@ -220,7 +265,7 @@ pub async fn chat(
         }
     };
 
-    // Store the user message and snapshot the last 20 for context.
+    // Store the user message and snapshot a slimmed history for the model.
     // The lock is released before any await.
     let history: Vec<LlmMessage> = {
         let store = match lock_chat(&s) {
@@ -230,25 +275,7 @@ pub async fn chat(
         if store.add_message(&session_id, "user", &message).is_err() {
             return internal();
         }
-        store
-            .list_messages(&session_id)
-            .unwrap_or_default()
-            .into_iter()
-            .rev()
-            .take(20)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .map(|m| LlmMessage {
-                role: if m.role == "assistant" {
-                    Role::Assistant
-                } else {
-                    Role::User
-                },
-                content: m.content,
-                tool_calls: None,
-            })
-            .collect()
+        history_for_model(store.list_messages(&session_id).unwrap_or_default())
     };
 
     chat_with_history(&s, &session_id, &prov_name, &model_name, history, &b).await
@@ -645,25 +672,7 @@ pub async fn run(
         if store.add_message(&session_id, "user", &message).is_err() {
             return internal();
         }
-        store
-            .list_messages(&session_id)
-            .unwrap_or_default()
-            .into_iter()
-            .rev()
-            .take(20)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .map(|m| LlmMessage {
-                role: if m.role == "assistant" {
-                    Role::Assistant
-                } else {
-                    Role::User
-                },
-                content: m.content,
-                tool_calls: None,
-            })
-            .collect()
+        history_for_model(store.list_messages(&session_id).unwrap_or_default())
     };
 
     // Fresh context every run: the model reasons with current facts.
@@ -680,7 +689,7 @@ pub async fn run(
         user_id: uid.clone(),
     };
     let policy = crate::harness::exec::Policy::from_env();
-    let (reply, trace) = match crate::harness::agent::run_loop(
+    let (reply, trace, tool_turns) = match crate::harness::agent::run_loop(
         &provider, &model, history, &system, &sink, &policy, 6,
     )
     .await
@@ -694,11 +703,33 @@ pub async fn run(
             Ok(g) => g,
             Err(r) => return r,
         };
+        // Persist tool turns (role "tool") BEFORE the final reply so the next
+        // run sees what was actually executed — this is what stops the model
+        // from confabulating past actions as current ones.
+        for turn in &tool_turns {
+            if store
+                .add_message(&session_id, "tool", &turn.content)
+                .is_err()
+            {
+                return internal();
+            }
+        }
         if store.add_message(&session_id, "assistant", &reply).is_err() {
             return internal();
         }
         let _ = store.touch_session(&session_id, provider.name(), Some(&model));
     }
+    eprintln!(
+        "[run] session={} provider={} model={} steps={} calls={:?}",
+        session_id.chars().take(8).collect::<String>(),
+        provider.name(),
+        model,
+        trace.len(),
+        trace
+            .iter()
+            .map(|t| format!("{}:{}", t.tool, t.ok))
+            .collect::<Vec<_>>(),
+    );
     (
         StatusCode::OK,
         Json(serde_json::json!({
@@ -741,5 +772,50 @@ impl crate::harness::agent::ActionSink for DbActionSink {
                 if ok { "done" } else { "failed" },
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chat::model::ChatMessageRow;
+
+    fn row(id: &str, role: &str, content: String) -> ChatMessageRow {
+        ChatMessageRow {
+            id: id.into(),
+            role: role.into(),
+            content,
+            created_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn history_slims_long_noisy_turns() {
+        let mut rows = vec![];
+        for i in 0..15 {
+            rows.push(row(&format!("m{i}"), "user", format!("hello {i}")));
+        }
+        rows.push(row("t", "tool", "x".repeat(2000)));
+        rows.push(row("u", "user", "go".into()));
+        let h = history_for_model(rows);
+        // Capped, tool blob truncated, newest turn always kept.
+        assert!(h.len() <= 12);
+        assert_eq!(h.last().unwrap().content, "go");
+        let tool = h.iter().find(|m| matches!(m.role, Role::Tool)).unwrap();
+        assert!(tool.content.ends_with("[truncated]"));
+        assert!(tool.content.len() <= 420);
+        assert!(h.iter().any(|m| matches!(m.role, Role::User)));
+    }
+
+    #[test]
+    fn history_keeps_tiny_sessions_intact() {
+        let rows = vec![
+            row("a", "user", "hi".into()),
+            row("b", "assistant", "hello".into()),
+        ];
+        let h = history_for_model(rows);
+        assert_eq!(h.len(), 2);
+        assert!(matches!(h[0].role, Role::User));
+        assert!(matches!(h[1].role, Role::Assistant));
     }
 }

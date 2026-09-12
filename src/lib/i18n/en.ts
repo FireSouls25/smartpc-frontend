@@ -15,8 +15,6 @@ export const en: Record<I18nKey, string> = {
   "auth.delete": "Delete account",
   "auth.deleteAsk": "Delete your account forever? This cannot be undone.",
   "common.loading": "Loading…",
-  "common.soon": "Coming soon",
-  "common.soonDesc": "This section arrives in the next iteration.",
   "common.theme": "Theme",
   "common.light": "Light",
   "common.dark": "Dark",
@@ -24,7 +22,6 @@ export const en: Record<I18nKey, string> = {
   "orb.idle": "Idle",
   "orb.listening": "Listening",
   "orb.thinking": "Thinking",
-  "chat.title": "Assistant",
   "chat.placeholder": "Ask your PC for something…",
   "chat.send": "Send",
   "chat.provider": "Provider",
@@ -56,4 +53,6 @@ export const en: Record<I18nKey, string> = {
   "settings.providerNote": "Only detected providers can be selected.",
   "settings.accountNote": "Your session on this device.",
   "topbar.settings": "Settings",
+  "protocol.mismatch":
+    "Local backend mismatch: rebuild the sidecar (cargo build) and restart the app.",
 };

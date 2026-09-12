@@ -23,6 +23,17 @@ function sidecarToken(): string {
   return sidecar()?.token ?? import.meta.env.VITE_SIDECAR_TOKEN ?? "";
 }
 
+/** Must match the sidecar PROTOCOL const; the shell warns on mismatch. */
+export const SIDECAR_PROTOCOL = 2;
+
+export async function fetchHealth(): Promise<{
+  status: string;
+  protocol: number;
+}> {
+  const res = await fetch(base() + "/health");
+  return (await res.json()) as { status: string; protocol: number };
+}
+
 export class ApiError extends Error {
   status: number;
   code?: string;

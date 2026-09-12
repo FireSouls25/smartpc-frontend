@@ -45,6 +45,9 @@ array that works for Ollama and llama.cpp (`--jinja`).
 - Catalog (closed): `get_system_context`, `list_processes` (read-only),
   `open_app` (low), `press_key` (medium, key allowlist), `type_text`
   (high, needs `HARNESS_ALLOW_RISKY=1`).
+- Debug: `HARNESS_DEBUG=1` logs every loop turn (user text, model text,
+  tool calls) to sidecar stderr — the evidence to paste when reporting
+  misbehavior.
 - Execution is the sandbox: unknown tools, bad args and policy blocks fail
   as results. Input via enigo (X11 full; Wayland restricted by design —
   attempted once, reported honestly). App launching via per-OS spawn

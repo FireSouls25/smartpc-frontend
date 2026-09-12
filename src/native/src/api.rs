@@ -23,6 +23,10 @@ use crate::{
     chat::store::ChatStore,
 };
 
+/// Protocol version: bump on any incompatible HTTP contract change.
+/// The UI compares it on boot and warns on mismatch (stale sidecar/app).
+pub const PROTOCOL: u32 = 2;
+
 #[derive(Clone)]
 pub struct AppState {
     pub store: Arc<Mutex<Store>>,
@@ -38,7 +42,7 @@ pub struct AppState {
 pub struct AuthedUser(pub String);
 
 async fn health() -> impl IntoResponse {
-    Json(serde_json::json!({ "status": "ok" }))
+    Json(serde_json::json!({ "status": "ok", "protocol": PROTOCOL }))
 }
 
 async fn require_sidecar_token(State(s): State<AppState>, req: Request, next: Next) -> Response {

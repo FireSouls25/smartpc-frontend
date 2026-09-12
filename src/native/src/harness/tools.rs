@@ -39,7 +39,7 @@ pub fn catalog() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "get_system_context",
-            description: "Re-read the machine context (OS, session, focused app, input capabilities). Use when the situation may have changed since the run started.",
+            description: "Re-read the machine context: OS and version, CPU, memory, session, focused app, input capabilities. Use for hardware and system questions (processor, memory, OS, focused app) and when the situation may have changed since the run started.",
             parameters: schema(json!({}), &[]),
             risk: Risk::ReadOnly,
             records_action: false,
