@@ -7,6 +7,7 @@
   import { getTheme, setTheme, type Theme } from "../../lib/theme.svelte";
   import { assistant } from "../assistant/assistant.store.svelte";
   import SelectMenu from "../../shared/SelectMenu.svelte";
+  import { api } from "../../lib/api";
 
   let { onBack }: { onBack: () => void } = $props();
 
@@ -15,6 +16,42 @@
 
   const items = (): string[] =>
     sections.map((s) => t(`settings.${s}` as I18nKey));
+
+  // In-app diagnostics: the sidecar mirrors its stderr here because
+  // Electron swallows it. Auto-load once when the AI section opens.
+  let diagLines = $state<string[]>([]);
+  let diagLoading = $state(false);
+  let diagLoaded = $state(false);
+  let diagCopied = $state(false);
+
+  $effect(() => {
+    if (section === 2 && !diagLoaded) {
+      diagLoaded = true;
+      void loadDiag();
+    }
+  });
+
+  async function loadDiag(): Promise<void> {
+    diagLoading = true;
+    try {
+      const res = await api<{ lines: string[] }>("/v1/support/diagnostics");
+      diagLines = res.lines;
+    } catch {
+      diagLines = [];
+    } finally {
+      diagLoading = false;
+    }
+  }
+
+  async function copyDiag(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(diagLines.join("\n"));
+      diagCopied = true;
+      setTimeout(() => (diagCopied = false), 1500);
+    } catch {
+      // Clipboard unavailable: the text stays visible to copy by hand.
+    }
+  }
 
   async function logout(): Promise<void> {
     await auth.logout();
@@ -148,6 +185,53 @@
           {#if assistant.selectError}
             <p class="error-box">{assistant.selectError}</p>
           {/if}
+          {#each assistant.providers.filter((p) => p.needs_key) as p (p.id)}
+            <div class="flex items-center gap-2">
+              <span class="chip">
+                <span
+                  class="dot"
+                  style="background: {assistant.keyStatus[p.id]
+                    ? 'var(--success)'
+                    : 'var(--warn)'};"
+                ></span>
+                {p.id}
+              </span>
+              <button
+                class="btn btn-ghost"
+                style="padding: 0.375rem 0.75rem; font-size: 0.75rem;"
+                onclick={() => assistant.openKeyModal(p.id)}
+              >
+                {assistant.keyStatus[p.id] ? t("aikey.change") : t("aikey.add")}
+              </button>
+            </div>
+          {/each}
+          <div class="mt-2 border-t pt-4" style="border-color: var(--border);">
+            <p class="label">{t("settings.diagnostics")}</p>
+            <p class="muted mb-2 text-xs">{t("settings.diagnosticsHint")}</p>
+            <div class="mb-2 flex flex-wrap gap-2">
+              <button
+                class="btn btn-ghost"
+                style="padding: 0.375rem 0.75rem; font-size: 0.75rem;"
+                onclick={() => void loadDiag()}
+                disabled={diagLoading}
+              >
+                {t("settings.diagReload")}
+              </button>
+              <button
+                class="btn btn-ghost"
+                style="padding: 0.375rem 0.75rem; font-size: 0.75rem;"
+                onclick={() => void copyDiag()}
+                disabled={diagLines.length === 0}
+              >
+                {diagCopied ? t("settings.diagCopied") : t("settings.diagCopy")}
+              </button>
+            </div>
+            <pre
+              class="font-mono text-xs whitespace-pre-wrap break-all"
+              style="max-height: 16rem; overflow: auto; border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.5rem 0.75rem; background: var(--card);"
+              >{diagLines.length > 0 ? diagLines.join("\n") : t("settings.diagEmpty")}</pre
+            >
+          </div>
         </div>
       {:else}
         <div class="flex flex-col gap-3">

@@ -54,9 +54,25 @@ export const es = {
   "settings.gesturesHint": "Usa la cámara para controlar con la mano.",
   "settings.providerNote": "Solo se pueden elegir proveedores detectados.",
   "settings.accountNote": "Tu sesión en este equipo.",
+  "settings.diagnostics": "Diagnóstico",
+  "settings.diagnosticsHint":
+    "Lo que el backend ha hecho (verificaciones, ejecuciones). Cópialo si algo falla.",
+  "settings.diagReload": "Recargar",
+  "settings.diagCopy": "Copiar",
+  "settings.diagCopied": "Copiado",
+  "settings.diagEmpty": "Sin eventos todavía. Prueba verificar una clave o pedir algo.",
   "topbar.settings": "Ajustes",
   "protocol.mismatch":
     "El backend local no coincide con esta interfaz: recompila el sidecar (cargo build) y reinicia la app.",
+  "aikey.title": "API key de OpenCode",
+  "aikey.desc":
+    "Se guarda cifrada en el almacén del sistema. Nunca sale de este equipo salvo hacia la API.",
+  "aikey.placeholder": "Pega tu API key…",
+  "aikey.save": "Guardar",
+  "aikey.cancel": "Cancelar",
+  "aikey.add": "Añadir API key",
+  "aikey.change": "Cambiar",
+  "aikey.remove": "Quitar",
 } as const;
 
 export type I18nKey = keyof typeof es;

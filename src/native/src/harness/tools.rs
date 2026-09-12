@@ -56,7 +56,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "open_app",
-            description: "Launch an application by name (e.g. firefox, code, Calculator). No arguments, no URLs, no shell — just the app name.",
+            description: "Launch an application by name (e.g. firefox, code, Calculator). No arguments, no URLs, no shell — just the app name. Friendly names (terminal, browser, editor, files, calculator) resolve automatically; the result names the exact binary started.",
             parameters: schema(
                 json!({ "name": { "type": "string", "description": "Application name or binary (no paths, no flags)" } }),
                 &["name"],
@@ -75,6 +75,19 @@ pub fn catalog() -> Vec<ToolDef> {
                     "left", "right", "up", "down", "f5",
                 ] } }),
                 &["key"],
+            ),
+            risk: Risk::Medium,
+            records_action: true,
+        },
+        ToolDef {
+            name: "close_app",
+            description: "Close a running application by name: matches process or executable names, friendly kinds like browser or terminal work too. May lose unsaved work — say so. Refuses its own backend process. Use list_processes first if unsure of the exact name.",
+            parameters: schema(
+                json!({
+                    "name": { "type": "string", "description": "App/process name (no paths, no flags)" },
+                    "force": { "type": "boolean", "description": "SIGKILL instead of graceful terminate when it won't die (default false)" },
+                }),
+                &["name"],
             ),
             risk: Risk::Medium,
             records_action: true,

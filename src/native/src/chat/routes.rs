@@ -18,7 +18,9 @@ use super::model::{ChatMessageRow, Selection};
 use super::store::ChatStore;
 use crate::{
     ai::{
-        provider::{ChatMessage as LlmMessage, ChatOptions, Provider, Role},
+        provider::{
+            ChatMessage as LlmMessage, ChatOptions, LlmProvider, Provider, ProviderError, Role,
+        },
         routes::error_response,
     },
     api::{AppState, AuthedUser},
@@ -159,9 +161,9 @@ pub async fn select(
     Extension(AuthedUser(uid)): Extension<AuthedUser>,
     Json(b): Json<SelectBody>,
 ) -> impl IntoResponse {
-    let provider = match Provider::resolve(&b.provider) {
+    let provider = match provider_with_key(&b.provider, &uid) {
         Ok(p) => p,
-        Err(e) => return error_response(&e),
+        Err(e) => return e,
     };
     let models = match provider.models().await {
         Ok(m) => m,
@@ -235,6 +237,13 @@ pub async fn chat(
         Ok(v) => v,
         Err(r) => return r,
     };
+    let provider = match provider_with_key(&prov_name, &uid) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if let Err(e) = provider.check_usable(&model_name) {
+        return error_response(&e);
+    }
 
     // Reuse the session (ownership checked) or create it from the first message.
     let session_id: String = {
@@ -278,7 +287,7 @@ pub async fn chat(
         history_for_model(store.list_messages(&session_id).unwrap_or_default())
     };
 
-    chat_with_history(&s, &session_id, &prov_name, &model_name, history, &b).await
+    chat_with_history(&s, &session_id, &provider, &model_name, history, &b).await
 }
 
 fn resolve_for_chat(
@@ -308,18 +317,36 @@ fn resolve_for_chat(
     Ok((provider.name().to_string(), model))
 }
 
+/// Resolve + inject the user's stored key for keyed providers.
+/// Construction without a key is fine for probing; chatting is not.
+fn provider_with_key(name: &str, uid: &str) -> Result<Provider, Response> {
+    let probe = match Provider::resolve(name) {
+        Ok(p) => p,
+        Err(e) => return Err(error_response(&e)),
+    };
+    if !probe.requires_key() {
+        return Ok(probe);
+    }
+    match crate::secrets::get_key(uid, probe.name()) {
+        Some(k) => Provider::resolve_with_key(probe.name(), Some(k)).map_err(|e| error_response(&e)),
+        None => Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": { "code": "missing_key", "message": "this provider needs an API key — add it in Settings" }
+            })),
+        )
+            .into_response()),
+    }
+}
+
 async fn chat_with_history(
     s: &AppState,
     session_id: &str,
-    prov_name: &str,
+    provider: &Provider,
     model_name: &str,
     history: Vec<LlmMessage>,
     b: &ChatBody,
 ) -> Response {
-    let provider = match Provider::resolve(prov_name) {
-        Ok(p) => p,
-        Err(e) => return error_response(&e),
-    };
     let opts = ChatOptions {
         model: model_name.to_string(),
         temperature: b.temperature,
@@ -341,7 +368,7 @@ async fn chat_with_history(
             )
                 .into_response()
         }
-        Err(e) => error_response(&e),
+        Err(e) => chat_error(provider.name(), model_name, &e),
     }
 }
 
@@ -589,6 +616,31 @@ pub struct RunBody {
 /// Agentic run: the model reasons with tools (see harness/) until done.
 /// Persists like chat; every mutating tool call becomes an Action row, so
 /// the left pane shows real executions with live statuses.
+/// A Zen model called on the wrong endpoint answers 404 with an HTML page
+/// (gpt-* lives on /responses, claude-* on /messages). Translate that into
+/// guidance instead of leaking page soup to the chat.
+fn chat_error(provider: &str, model: &str, e: &ProviderError) -> Response {
+    if provider == "opencode" {
+        if let ProviderError::Status(404, body) = e {
+            if body.contains("<!DOCTYPE") || body.contains("<html") {
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({
+                        "error": {
+                            "code": "wrong_endpoint",
+                            "message": format!(
+                                "model '{model}' does not answer on chat completions — pick a chat model (e.g. big-pickle, kimi-k2.5, glm-5) in Settings → AI model"
+                            ),
+                        }
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    }
+    error_response(e)
+}
+
 pub async fn run(
     State(s): State<AppState>,
     Extension(AuthedUser(uid)): Extension<AuthedUser>,
@@ -622,9 +674,9 @@ pub async fn run(
             .map(|p| p.provider.clone())
             .unwrap_or_else(|| "ollama".into())
     });
-    let provider = match Provider::resolve(&prov_name) {
+    let provider = match provider_with_key(&prov_name, &uid) {
         Ok(p) => p,
-        Err(e) => return error_response(&e),
+        Err(e) => return e,
     };
     let model = non_empty(&b.model)
         .or_else(|| {
@@ -637,6 +689,9 @@ pub async fn run(
             })
         })
         .unwrap_or_else(|| provider.default_model().to_string());
+    if let Err(e) = provider.check_usable(&model) {
+        return error_response(&e);
+    }
 
     let session_id: String = {
         let store = match lock_chat(&s) {
@@ -695,7 +750,7 @@ pub async fn run(
     .await
     {
         Ok(v) => v,
-        Err(e) => return error_response(&e),
+        Err(e) => return chat_error(provider.name(), &model, &e),
     };
 
     {
@@ -719,7 +774,7 @@ pub async fn run(
         }
         let _ = store.touch_session(&session_id, provider.name(), Some(&model));
     }
-    eprintln!(
+    let run_line = format!(
         "[run] session={} provider={} model={} steps={} calls={:?}",
         session_id.chars().take(8).collect::<String>(),
         provider.name(),
@@ -727,9 +782,16 @@ pub async fn run(
         trace.len(),
         trace
             .iter()
-            .map(|t| format!("{}:{}", t.tool, t.ok))
+            .map(|t| {
+                let args: String = t.args.to_string().chars().take(80).collect();
+                format!("{}:{}:{}", t.tool, t.ok, args)
+            })
             .collect::<Vec<_>>(),
     );
+    // Mirror into the in-app ring buffer: stderr is invisible when
+    // Electron spawns the sidecar, so Ajustes → Diagnóstico reads this.
+    eprintln!("{run_line}");
+    crate::diagnostics::push(run_line);
     (
         StatusCode::OK,
         Json(serde_json::json!({
@@ -773,6 +835,158 @@ impl crate::harness::agent::ActionSink for DbActionSink {
             );
         }
     }
+}
+
+#[derive(Deserialize)]
+pub struct SaveKeyBody {
+    pub provider: String,
+    pub key: String,
+}
+
+/// Stores a provider API key in the OS credential store (never in SQLite).
+/// Verifies with the cheapest possible live call so typos fail fast here
+/// instead of mysteriously at chat time.
+pub async fn save_key(
+    State(_s): State<AppState>,
+    Extension(AuthedUser(uid)): Extension<AuthedUser>,
+    Json(b): Json<SaveKeyBody>,
+) -> impl IntoResponse {
+    let probe = match Provider::resolve(&b.provider) {
+        Ok(p) => p,
+        Err(e) => return error_response(&e),
+    };
+    if !probe.requires_key() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": { "code": "validation", "message": "this provider does not use API keys", "field": "provider" }
+            })),
+        )
+            .into_response();
+    }
+    let candidate = b.key.trim().to_string();
+    if candidate.len() < 8 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": { "code": "invalid_key", "message": "that key looks too short — paste the full key" }
+            })),
+        )
+            .into_response();
+    }
+    match super::super::ai::opencode::OpenCodeCompat::verify_key(&candidate).await {
+        Ok(()) => {}
+        Err(super::super::ai::opencode::VerifyError::InvalidKey) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": { "code": "invalid_key", "message": "the provider rejected this key — check it and try again" }
+                })),
+            )
+                .into_response();
+        }
+        Err(super::super::ai::opencode::VerifyError::Unreachable(detail)) => {
+            eprintln!("key verify unreachable: {detail}");
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({
+                    "error": { "code": "ai_unreachable", "message": "could not reach the provider — check your connection and try again" }
+                })),
+            )
+                .into_response();
+        }
+        Err(super::super::ai::opencode::VerifyError::Inconclusive(detail)) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": { "code": "unverified", "message": detail }
+                })),
+            )
+                .into_response();
+        }
+    }
+    // The key just verified: read the live catalog now so the UI can offer
+    // every available model instead of a hardcoded one. The catalog is
+    // public; a failed read degrades to an empty list, never to an error.
+    let (models, suggested) = match super::super::ai::opencode::OpenCodeCompat::new() {
+        Ok(p) => match p.models().await {
+            Ok(m) => {
+                let s = super::super::ai::opencode::OpenCodeCompat::suggested_model(&m);
+                (m, s)
+            }
+            Err(_) => (vec![], None),
+        },
+        Err(_) => (vec![], None),
+    };
+    match crate::secrets::set_key(&uid, probe.name(), &candidate) {
+        Ok(()) => {
+            crate::diagnostics::push(format!(
+                "keys: {} key saved ({} live models)",
+                probe.name(),
+                models.len()
+            ));
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "ok": true, "models": models, "suggested_model": suggested
+                })),
+            )
+                .into_response()
+        }
+        Err(detail) => {
+            eprintln!("key store failed: {detail}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": { "code": "internal", "message": "could not save the key on this machine" } })),
+            )
+                .into_response()
+        }
+    }
+}
+
+pub async fn delete_key(
+    State(_s): State<AppState>,
+    Extension(AuthedUser(uid)): Extension<AuthedUser>,
+    Path(provider): Path<String>,
+) -> impl IntoResponse {
+    let probe = match Provider::resolve(&provider) {
+        Ok(p) => p,
+        Err(e) => return error_response(&e),
+    };
+    if !probe.requires_key() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": { "code": "validation", "message": "this provider does not use API keys", "field": "provider" }
+            })),
+        )
+            .into_response();
+    }
+    match crate::secrets::delete_key(&uid, probe.name()) {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
+        Err(detail) => {
+            eprintln!("key delete failed: {detail}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": { "code": "internal", "message": "could not delete the key on this machine" } })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Key presence per keyed provider (never the keys themselves).
+pub async fn key_status(
+    State(_s): State<AppState>,
+    Extension(AuthedUser(uid)): Extension<AuthedUser>,
+) -> impl IntoResponse {
+    let list: Vec<_> = Provider::keyed_ids()
+        .iter()
+        .map(|id| {
+            serde_json::json!({ "provider": id, "has_key": crate::secrets::has_key(&uid, id) })
+        })
+        .collect();
+    (StatusCode::OK, Json(serde_json::json!({ "keys": list }))).into_response()
 }
 
 #[cfg(test)]

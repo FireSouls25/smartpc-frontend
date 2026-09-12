@@ -8,6 +8,7 @@
   import CenterPanel from "../domains/assistant/CenterPanel.svelte";
   import SessionsPane from "../domains/assistant/SessionsPane.svelte";
   import SettingsPage from "../domains/settings/SettingsPage.svelte";
+  import ApiKeyModal from "../shared/ApiKeyModal.svelte";
   import { fetchHealth, SIDECAR_PROTOCOL } from "../lib/api";
   import { t } from "../lib/i18n.svelte";
 
@@ -62,5 +63,6 @@
         <SettingsPage onBack={() => (view = "main")} />
       </div>
     {/if}
+    <ApiKeyModal />
   </div>
 </div>

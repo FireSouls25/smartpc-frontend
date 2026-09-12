@@ -104,6 +104,7 @@ pub enum ProviderError {
     BadResponse(String),
     Misconfigured(String),
     UnknownProvider(String),
+    MissingModel,
 }
 
 fn trunc(s: &str, n: usize) -> String {
@@ -142,7 +143,12 @@ impl ProviderError {
             ProviderError::UnknownProvider(name) => (
                 400,
                 "unknown_provider",
-                format!("unknown provider: {name} (try ollama, llama.cpp)"),
+                format!("unknown provider: {name} (try ollama, llama.cpp, opencode)"),
+            ),
+            ProviderError::MissingModel => (
+                400,
+                "missing_model",
+                "choose a model for this provider".to_string(),
             ),
         }
     }
@@ -154,6 +160,9 @@ impl ProviderError {
 pub trait LlmProvider: Send + Sync {
     fn name(&self) -> &'static str;
     fn default_model(&self) -> &str;
+    /// Swap credentials post-construction (keyed providers resolve first,
+    /// then receive the user's key). Default: ignored.
+    fn set_api_key(&mut self, _key: Option<String>) {}
     fn chat(
         &self,
         messages: Vec<ChatMessage>,
@@ -172,23 +181,53 @@ pub trait LlmProvider: Send + Sync {
 pub enum Provider {
     Ollama(super::ollama::Ollama),
     LlamaCpp(super::llamacpp::LlamaCpp),
+    OpenCode(super::opencode::OpenCodeCompat),
 }
 
 impl Provider {
+    /// Provider ids that authenticate with user keys (see secrets.rs).
+    pub fn keyed_ids() -> &'static [&'static str] {
+        &["opencode"]
+    }
+
     pub fn resolve(name: &str) -> Result<Self, ProviderError> {
+        Self::resolve_with_key(name, None)
+    }
+
+    pub fn resolve_with_key(name: &str, key: Option<String>) -> Result<Self, ProviderError> {
         match name {
             "ollama" => Ok(Self::Ollama(super::ollama::Ollama::new()?)),
             "llama.cpp" | "llamacpp" | "llama-cpp" => {
                 Ok(Self::LlamaCpp(super::llamacpp::LlamaCpp::new()?))
             }
+            "opencode" => {
+                let mut p = super::opencode::OpenCodeCompat::new()?;
+                p.set_api_key(key);
+                Ok(Self::OpenCode(p))
+            }
             other => Err(ProviderError::UnknownProvider(other.to_string())),
         }
+    }
+
+    /// Providers that cannot do anything useful without a user key.
+    pub fn requires_key(&self) -> bool {
+        matches!(self, Self::OpenCode(_))
+    }
+
+    /// Guard chat paths: a keyed provider with no model selected is a
+    /// configuration error, not a gateway round-trip.
+    pub fn check_usable(&self, model: &str) -> Result<(), ProviderError> {
+        if self.requires_key() && model.trim().is_empty() {
+            return Err(ProviderError::MissingModel);
+        }
+        Ok(())
     }
 
     pub fn name(&self) -> &'static str {
         match self {
             Self::Ollama(p) => p.name(),
             Self::LlamaCpp(p) => p.name(),
+            Self::OpenCode(p) => p.name(),
         }
     }
 
@@ -196,6 +235,7 @@ impl Provider {
         match self {
             Self::Ollama(p) => p.default_model(),
             Self::LlamaCpp(p) => p.default_model(),
+            Self::OpenCode(p) => p.default_model(),
         }
     }
 
@@ -207,6 +247,7 @@ impl Provider {
         match self {
             Self::Ollama(p) => p.chat(messages, opts).await,
             Self::LlamaCpp(p) => p.chat(messages, opts).await,
+            Self::OpenCode(p) => p.chat(messages, opts).await,
         }
     }
 
@@ -214,6 +255,7 @@ impl Provider {
         match self {
             Self::Ollama(p) => p.models().await,
             Self::LlamaCpp(p) => p.models().await,
+            Self::OpenCode(p) => p.models().await,
         }
     }
 }
@@ -223,6 +265,7 @@ impl LlmProvider for Provider {
         match self {
             Self::Ollama(p) => p.name(),
             Self::LlamaCpp(p) => p.name(),
+            Self::OpenCode(p) => p.name(),
         }
     }
 
@@ -230,6 +273,7 @@ impl LlmProvider for Provider {
         match self {
             Self::Ollama(p) => p.default_model(),
             Self::LlamaCpp(p) => p.default_model(),
+            Self::OpenCode(p) => p.default_model(),
         }
     }
 
@@ -241,6 +285,7 @@ impl LlmProvider for Provider {
         match self {
             Self::Ollama(p) => p.chat(messages, opts).await,
             Self::LlamaCpp(p) => p.chat(messages, opts).await,
+            Self::OpenCode(p) => p.chat(messages, opts).await,
         }
     }
 
@@ -253,6 +298,7 @@ impl LlmProvider for Provider {
         match self {
             Self::Ollama(p) => p.chat_with_tools(messages, opts, tools).await,
             Self::LlamaCpp(p) => p.chat_with_tools(messages, opts, tools).await,
+            Self::OpenCode(p) => p.chat_with_tools(messages, opts, tools).await,
         }
     }
 
@@ -260,6 +306,7 @@ impl LlmProvider for Provider {
         match self {
             Self::Ollama(p) => p.models().await,
             Self::LlamaCpp(p) => p.models().await,
+            Self::OpenCode(p) => p.models().await,
         }
     }
 }

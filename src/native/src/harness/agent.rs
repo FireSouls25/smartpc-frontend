@@ -35,6 +35,7 @@ fn title_for(tool: &str, args: &serde_json::Value) -> String {
     let arg = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("?");
     match tool {
         "open_app" => format!("Abrir {}", arg("name")),
+        "close_app" => format!("Cerrar {}", arg("name")),
         "press_key" => format!("Pulsar {}", arg("key")),
         "type_text" => "Escribir texto".to_string(),
         _ => tool.to_string(),

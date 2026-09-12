@@ -7,6 +7,18 @@ export interface ProviderInfo {
   available: boolean;
   models: string[];
   default_model: string;
+  needs_key: boolean;
+}
+
+export interface KeyStatus {
+  provider: string;
+  has_key: boolean;
+}
+
+export interface SaveKeyResponse {
+  ok: boolean;
+  models: string[];
+  suggested_model: string | null;
 }
 
 export interface SessionSummary {
@@ -135,4 +147,23 @@ export const aiApi = {
       `/v1/actions?session_id=${encodeURIComponent(sessionId)}`,
       withAuth(auth.token ?? undefined),
     ),
+
+  keyStatus: () =>
+    api<{ keys: KeyStatus[] }>(
+      "/v1/ai/keys",
+      withAuth(auth.token ?? undefined),
+    ),
+
+  saveKey: (provider: string, key: string) =>
+    api<SaveKeyResponse>("/v1/ai/keys", {
+      method: "POST",
+      body: { provider, key },
+      ...withAuth(auth.token ?? undefined),
+    }),
+
+  deleteKey: (provider: string) =>
+    api<{ ok: boolean }>(`/v1/ai/keys/${encodeURIComponent(provider)}`, {
+      method: "DELETE",
+      ...withAuth(auth.token ?? undefined),
+    }),
 };

@@ -43,15 +43,19 @@ reasons in an agent loop (`POST /v1/ai/run`) over one OpenAI-style `tools`
 array that works for Ollama and llama.cpp (`--jinja`).
 
 - Catalog (closed): `get_system_context`, `list_processes` (read-only),
-  `open_app` (low), `press_key` (medium, key allowlist), `type_text`
-  (high, needs `HARNESS_ALLOW_RISKY=1`).
+  `open_app` (low), `close_app` (medium), `press_key` (medium, key allowlist),
+  `type_text` (high, needs `HARNESS_ALLOW_RISKY=1`).
 - Debug: `HARNESS_DEBUG=1` logs every loop turn (user text, model text,
   tool calls) to sidecar stderr — the evidence to paste when reporting
   misbehavior.
 - Execution is the sandbox: unknown tools, bad args and policy blocks fail
   as results. Input via enigo (X11 full; Wayland restricted by design —
   attempted once, reported honestly). App launching via per-OS spawn
-  (PATH / `open -a` / `start`), never a shell.
+  (PATH / `open -a` / `start`), never a shell; friendly names resolve
+  (`terminal`, `Prism Launcher` → real binaries), spawns are verified alive
+  after 600 ms (instant exit = honest failure, not fake success), and
+  `close_app` terminates by name with the same verification (refuses its
+  own backend; exited children are reaped so no zombies linger).
 - Portability: the Windows/macOS branches are minimal std-only code paths
   (reviewed, not compiled here — cross-checking needs mingw/mac SDKs, i.e.
   CI). Wayland input stays experimental upstream and is intentionally off.
@@ -69,6 +73,21 @@ array that works for Ollama and llama.cpp (`--jinja`).
   the token gate (not the origin) is the boundary, so CORS is open locally.
 - Blocking SQLite calls run inline; fine for local auth traffic, revisit
   with `spawn_blocking` when streaming STT lands.
+
+## Remote providers with keys (OpenCode Zen)
+
+`opencode` (https://opencode.ai/zen, OpenAI-compatible chat + public model
+catalog) joins ollama/llama.cpp through the same `LlmProvider` trait.
+API keys live in the OS credential store (Keychain / Credential Manager /
+Secret Service) under `smart-pc`, account `<user-id>:<provider>-api-key` —
+never in SQLite, logs or responses. `<PROVIDER>_API_KEY` env vars override
+for containers/CI. Saving a key verifies it with one tiny live call, so
+typos fail fast (`invalid_key`) instead of mysteriously at chat time.
+Notes from the field: Zen sits behind bot protection — the client
+identifies as `smartpc-native/<version>` (requests without a UA get
+challenged), verification tries chat-compatible catalog models first and
+spaces attempts because rapid bursts get HTML 404s instead of API errors.
+Anything inconclusive surfaces as `unverified`, never as a false "invalid".
 
 ## Dev
 

@@ -1,6 +1,5 @@
 import { aiApi, type ProviderInfo, type SessionSummary } from "./assistant.api";
 import { getLang, t, type I18nKey } from "../../lib/i18n.svelte";
-
 export type OrbState = "idle" | "listening" | "thinking";
 
 export interface ChatMsg {
@@ -31,6 +30,10 @@ let providers = $state<ProviderInfo[]>([]);
 let providersLoading = $state(false);
 let providersError = $state("");
 let selectError = $state("");
+let keyStatus = $state<Record<string, boolean>>({});
+let keyModal = $state<{ provider: string; hasKey: boolean } | null>(null);
+let keyBusy = $state(false);
+let keyError = $state("");
 let activeProvider = $state("ollama");
 let activeModel = $state("");
 let gesturesOn = $state<boolean>(true);
@@ -65,6 +68,7 @@ async function loadProviders(): Promise<void> {
   try {
     const res = await aiApi.providers();
     providers = res.providers;
+    await refreshKeyStatus();
     try {
       const sel = await aiApi.selection();
       activeProvider = sel.provider;
@@ -86,6 +90,10 @@ async function selectProvider(id: string, model?: string | null): Promise<void> 
     selectError = t("providers.offline");
     return;
   }
+  if (p.needs_key && !keyStatus[p.id]) {
+    openKeyModal(id);
+    return;
+  }
   try {
     const res = await aiApi.select(id, model ?? undefined);
     activeProvider = res.provider;
@@ -97,6 +105,59 @@ async function selectProvider(id: string, model?: string | null): Promise<void> 
 
 async function selectModel(m: string): Promise<void> {
   await selectProvider(activeProvider, m);
+}
+
+async function refreshKeyStatus(): Promise<void> {
+  try {
+    const res = await aiApi.keyStatus();
+    const next: Record<string, boolean> = {};
+    for (const k of res.keys) next[k.provider] = k.has_key;
+    keyStatus = next;
+  } catch {
+    /* key status is advisory; providers still list */
+  }
+}
+
+function openKeyModal(provider: string): void {
+  keyError = "";
+  keyModal = { provider, hasKey: !!keyStatus[provider] };
+}
+
+function closeKeyModal(): void {
+  keyModal = null;
+  keyError = "";
+}
+
+async function saveKey(provider: string, key: string): Promise<void> {
+  keyBusy = true;
+  keyError = "";
+  try {
+    const res = await aiApi.saveKey(provider, key);
+    await refreshKeyStatus();
+    // Fresh live catalog now that the key exists, then pre-select a model
+    // that actually answers — the dropdown keeps offering every model.
+    await loadProviders();
+    closeKeyModal();
+    await selectProvider(provider, res.suggested_model ?? undefined);
+  } catch (err) {
+    keyError = err instanceof Error ? err.message : "Error";
+  } finally {
+    keyBusy = false;
+  }
+}
+
+async function deleteKey(provider: string): Promise<void> {
+  keyBusy = true;
+  keyError = "";
+  try {
+    await aiApi.deleteKey(provider);
+    await refreshKeyStatus();
+    closeKeyModal();
+  } catch (err) {
+    keyError = err instanceof Error ? err.message : "Error";
+  } finally {
+    keyBusy = false;
+  }
 }
 
 function activeModels(): string[] {
@@ -285,6 +346,18 @@ export const assistant = {
   get selectError(): string {
     return selectError;
   },
+  get keyStatus(): Record<string, boolean> {
+    return keyStatus;
+  },
+  get keyModal(): { provider: string; hasKey: boolean } | null {
+    return keyModal;
+  },
+  get keyBusy(): boolean {
+    return keyBusy;
+  },
+  get keyError(): string {
+    return keyError;
+  },
   get activeProvider(): string {
     return activeProvider;
   },
@@ -310,6 +383,11 @@ export const assistant = {
   refreshSessions,
   selectProvider,
   selectModel,
+  refreshKeyStatus,
+  openKeyModal,
+  closeKeyModal,
+  saveKey,
+  deleteKey,
   newChat,
   openSession,
   deleteSession,

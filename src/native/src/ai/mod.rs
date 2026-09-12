@@ -7,5 +7,6 @@
 pub mod llamacpp;
 pub mod ollama;
 pub mod openai_compat;
+pub mod opencode;
 pub mod provider;
 pub mod routes;

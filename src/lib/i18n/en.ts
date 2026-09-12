@@ -52,7 +52,23 @@ export const en: Record<I18nKey, string> = {
   "settings.gesturesHint": "Use the camera to control with your hand.",
   "settings.providerNote": "Only detected providers can be selected.",
   "settings.accountNote": "Your session on this device.",
+  "settings.diagnostics": "Diagnostics",
+  "settings.diagnosticsHint":
+    "What the backend has done (verifications, runs). Copy it if something fails.",
+  "settings.diagReload": "Reload",
+  "settings.diagCopy": "Copy",
+  "settings.diagCopied": "Copied",
+  "settings.diagEmpty": "No events yet. Try verifying a key or asking something.",
   "topbar.settings": "Settings",
   "protocol.mismatch":
     "Local backend mismatch: rebuild the sidecar (cargo build) and restart the app.",
+  "aikey.title": "OpenCode API key",
+  "aikey.desc":
+    "Stored encrypted in the system credential store. It never leaves this machine except toward the API.",
+  "aikey.placeholder": "Paste your API key…",
+  "aikey.save": "Save",
+  "aikey.cancel": "Cancel",
+  "aikey.add": "Add API key",
+  "aikey.change": "Change",
+  "aikey.remove": "Remove",
 };

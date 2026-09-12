@@ -128,6 +128,11 @@ pub fn router(state: AppState) -> Router {
             "/v1/actions/{id}",
             patch(crate::chat::routes::update_action),
         )
+        .route(
+            "/v1/ai/keys",
+            get(crate::chat::routes::key_status).post(crate::chat::routes::save_key),
+        )
+        .route("/v1/ai/keys/{id}", delete(crate::chat::routes::delete_key))
         .merge(user_routes)
         .route_layer(middleware::from_fn_with_state(state.clone(), require_user));
     let authed = Router::new()
@@ -136,6 +141,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/auth/refresh", post(auth::routes::refresh))
         .route("/v1/auth/logout", post(auth::routes::logout))
         .route("/v1/ai/providers", get(crate::ai::routes::providers))
+        .route("/v1/support/diagnostics", get(crate::diagnostics::handler))
         .merge(user_ai)
         .route_layer(middleware::from_fn_with_state(
             state.clone(),

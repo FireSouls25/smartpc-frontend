@@ -21,32 +21,40 @@ pub(crate) fn error_response(e: &ProviderError) -> Response {
         .into_response()
 }
 
+fn needs_key(id: &str) -> bool {
+    id == "opencode"
+}
+
 async fn probe(id: &str) -> serde_json::Value {
     match Provider::resolve(id) {
         Ok(p) => match p.models().await {
             Ok(models) => serde_json::json!({
                 "id": id, "name": p.name(), "available": true,
                 "models": models, "default_model": p.default_model(),
+                "needs_key": needs_key(id),
             }),
             Err(_) => serde_json::json!({
                 "id": id, "name": p.name(), "available": false,
                 "models": [], "default_model": p.default_model(),
+                "needs_key": needs_key(id),
             }),
         },
         Err(_) => serde_json::json!({
             "id": id, "name": id, "available": false,
             "models": [], "default_model": "",
+            "needs_key": needs_key(id),
         }),
     }
 }
 
-/// Live detection: probes every known local provider concurrently.
+/// Live detection: probes every known provider concurrently.
 /// The UI offers only what answers; the rest renders as unavailable.
 pub async fn providers(State(_s): State<AppState>) -> impl IntoResponse {
-    let (ollama, llamacpp) = tokio::join!(probe("ollama"), probe("llama.cpp"));
+    let (ollama, llamacpp, opencode) =
+        tokio::join!(probe("ollama"), probe("llama.cpp"), probe("opencode"));
     (
         StatusCode::OK,
-        Json(serde_json::json!({ "providers": [ollama, llamacpp] })),
+        Json(serde_json::json!({ "providers": [ollama, llamacpp, opencode] })),
     )
         .into_response()
 }

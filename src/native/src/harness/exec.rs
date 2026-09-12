@@ -71,6 +71,7 @@ pub async fn execute(name: &str, args: &serde_json::Value, policy: &Policy) -> T
             "list_processes" => tool_processes(&args),
             "open_app" => tool_open_app(&args),
             "press_key" => tool_press_key(&args),
+            "close_app" => tool_close_app(&args),
             "type_text" => tool_type_text(&args, &policy),
             _ => err(format!("unknown tool: {name}")),
         }
@@ -143,59 +144,407 @@ fn tool_open_app(args: &serde_json::Value) -> ToolOutcome {
     {
         return err("app name must be a plain name (no paths, flags or shell characters)");
     }
-    spawn_detached(&name)
+    let target = match resolve_app(&name) {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    spawn_verified(target, &name)
 }
+
+/// Friendly names users actually say, per OS. First match found wins.
+#[cfg(target_os = "macos")]
+const TERMINAL_APPS: &[&str] = &["Terminal", "iTerm", "kitty", "Alacritty"];
+#[cfg(target_os = "windows")]
+const TERMINAL_APPS: &[&str] = &["wt", "cmd"];
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const TERMINAL_APPS: &[&str] = &[
+    "kitty",
+    "alacritty",
+    "konsole",
+    "gnome-terminal",
+    "xfce4-terminal",
+    "xterm",
+];
 
 #[cfg(target_os = "macos")]
-fn spawn_detached(name: &str) -> ToolOutcome {
-    use std::process::Stdio;
-    match std::process::Command::new("open")
-        .arg("-a")
-        .arg(name)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(child) => ok(format!("started {name} (pid {})", child.id())),
-        Err(_) => spawn_path(name),
-    }
-}
-
+const BROWSER_APPS: &[&str] = &["Safari", "Firefox", "Google Chrome", "Chromium"];
 #[cfg(target_os = "windows")]
-fn spawn_detached(name: &str) -> ToolOutcome {
-    use std::process::Stdio;
-    match std::process::Command::new("cmd")
-        .args(["/C", "start", "", name])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(child) => ok(format!("started {name} (pid {})", child.id())),
-        Err(e) => err(format!("could not start {name}: {e}")),
+const BROWSER_APPS: &[&str] = &["chrome", "firefox", "msedge"];
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const BROWSER_APPS: &[&str] = &[
+    "firefox",
+    "chromium",
+    "google-chrome-stable",
+    "google-chrome",
+    "brave",
+];
+
+#[cfg(target_os = "macos")]
+const EDITOR_APPS: &[&str] = &["TextEdit", "Visual Studio Code", "Sublime Text"];
+#[cfg(target_os = "windows")]
+const EDITOR_APPS: &[&str] = &["notepad"];
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const EDITOR_APPS: &[&str] = &["code", "kate", "gedit", "mousepad"];
+
+#[cfg(target_os = "macos")]
+const FILES_APPS: &[&str] = &["Finder"];
+#[cfg(target_os = "windows")]
+const FILES_APPS: &[&str] = &["explorer"];
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const FILES_APPS: &[&str] = &["dolphin", "nautilus", "thunar", "pcmanfm"];
+
+#[cfg(target_os = "macos")]
+const CALC_APPS: &[&str] = &["Calculator"];
+#[cfg(target_os = "windows")]
+const CALC_APPS: &[&str] = &["calc"];
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const CALC_APPS: &[&str] = &["gnome-calculator", "kcalc", "galculator"];
+
+fn alias_candidates(kind: &str) -> Option<&'static [&'static str]> {
+    Some(match kind {
+        "terminal" | "consola" => TERMINAL_APPS,
+        "browser" | "navegador" | "navegador web" => BROWSER_APPS,
+        "editor" | "editor de texto" => EDITOR_APPS,
+        "files" | "archivos" | "file manager" | "explorador" => FILES_APPS,
+        "calculator" | "calculadora" => CALC_APPS,
+        _ => return None,
+    })
+}
+
+fn path_dirs() -> Vec<std::path::PathBuf> {
+    std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default()
+}
+
+#[cfg(unix)]
+fn is_executable_file(p: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    p.is_file()
+        && p.metadata()
+            .map(|m| m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn is_executable_file(p: &std::path::Path) -> bool {
+    if !p.is_file() {
+        return false;
+    }
+    match p.extension().and_then(|e| e.to_str()) {
+        Some(ext) => matches!(
+            ext.to_lowercase().as_str(),
+            "exe" | "cmd" | "bat" | "com" | "ps1"
+        ),
+        None => false,
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn spawn_detached(name: &str) -> ToolOutcome {
-    spawn_path(name)
+/// What to execute: a friendly name for the OS opener, or an exact binary.
+enum OpenTarget {
+    /// Friendly name for the OS opener (`open -a` / `start` resolves it).
+    /// Only produced on macOS/Windows; Linux always resolves to Binary.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    System(String),
+    Binary(String),
+}
+
+fn resolve_app(name: &str) -> Result<OpenTarget, ToolOutcome> {
+    // macOS `open -a` and Windows `start` resolve friendly names natively.
+    #[cfg(target_os = "macos")]
+    return Ok(OpenTarget::System(name.to_string()));
+    #[cfg(target_os = "windows")]
+    return Ok(OpenTarget::System(name.to_string()));
+    // Elsewhere: exact binary, friendly alias, then normalized match
+    // ("Prism Launcher" -> "prismlauncher").
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        if let Some(hit) = find_in_path(name) {
+            return Ok(OpenTarget::Binary(hit));
+        }
+        let lower = name.to_lowercase();
+        if let Some(cands) = alias_candidates(&lower) {
+            if let Some(hit) = cands.iter().find_map(|c| find_in_path(c)) {
+                return Ok(OpenTarget::Binary(hit));
+            }
+            return Err(err(format!(
+                "no {name} found (looked for: {}); use the exact binary name",
+                cands.join(", ")
+            )));
+        }
+        let norm: String = lower.chars().filter(|c| c.is_alphanumeric()).collect();
+        if norm.len() >= 3 {
+            if let Some(hit) = find_in_path_normalized(&norm) {
+                return Ok(OpenTarget::Binary(hit));
+            }
+        }
+        Err(err(format!(
+            "{name} not found in PATH; use the exact binary name (e.g. prismlauncher, firefox)"
+        )))
+    }
+}
+
+fn find_in_path(name: &str) -> Option<String> {
+    for dir in path_dirs() {
+        let candidate = dir.join(name);
+        if is_executable_file(&candidate) {
+            return candidate.to_string_lossy().into_owned().into();
+        }
+    }
+    None
 }
 
 #[cfg(not(target_os = "windows"))]
-fn spawn_path(name: &str) -> ToolOutcome {
+fn find_in_path_normalized(norm: &str) -> Option<String> {
+    let mut scanned = 0u32;
+    for dir in path_dirs() {
+        let entries = std::fs::read_dir(dir).ok()?;
+        for entry in entries.flatten() {
+            let file_name = entry.file_name().to_string_lossy().into_owned();
+            let normalized: String = file_name
+                .to_lowercase()
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect();
+            if normalized == norm && is_executable_file(&entry.path()) {
+                return Some(file_name);
+            }
+            scanned += 1;
+            if scanned > 20000 {
+                return None;
+            }
+        }
+    }
+    None
+}
+
+fn spawn_target(target: &OpenTarget) -> Result<std::process::Child, ToolOutcome> {
     use std::process::Stdio;
-    match std::process::Command::new(name)
-        .stdin(Stdio::null())
+    let mut cmd = match target {
+        #[cfg(target_os = "macos")]
+        OpenTarget::System(name) => {
+            let mut c = std::process::Command::new("open");
+            c.arg("-a").arg(name);
+            c
+        }
+        #[cfg(target_os = "windows")]
+        OpenTarget::System(name) => {
+            let mut c = std::process::Command::new("cmd");
+            c.args(["/C", "start", "", name]);
+            c
+        }
+        OpenTarget::Binary(path) => std::process::Command::new(path),
+    };
+    cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-    {
-        Ok(child) => ok(format!("started {name} (pid {})", child.id())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            err(format!("{name} not found in PATH or as a known app"))
+        .map_err(|e| err(format!("could not start: {e}")))
+}
+
+fn spawn_verified(target: OpenTarget, display: &str) -> ToolOutcome {
+    let mut child = match spawn_target(&target) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    // Give GUI apps a beat to fail fast (missing display, bad binary...).
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    match child.try_wait() {
+        Ok(None) => {
+            let pid = child.id();
+            // Detached reaper: GUI apps outlive this call, and an exited
+            // child nobody waits on lingers as a zombie (breaking later
+            // liveness checks, including our own). One tiny parked thread
+            // per spawn; it exits when the app does.
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            ok(format!("started {display} (pid {pid})"))
         }
-        Err(e) => err(format!("could not start {name}: {e}")),
+        Ok(Some(status)) if status.success() => match target {
+            // Launcher wrappers (open/start) exit 0 on handoff: that IS success.
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            OpenTarget::System(_) => ok(format!("launched {display}")),
+            // A directly-spawned binary exiting instantly launched nothing.
+            OpenTarget::Binary(_) => err(format!(
+                "{display} started but exited immediately (code 0) — likely a console helper, not a GUI app; check the binary name"
+            )),
+        },
+        Ok(Some(status)) => err(format!(
+            "{display} failed immediately (exit {status}) — wrong binary name or missing display"
+        )),
+        Err(e) => err(format!("could not supervise {display}: {e}")),
+    }
+}
+
+/// Candidate process names for a close request: the literal name, its
+/// lowercase form, and friendly-alias expansions (terminal, browser...).
+fn close_candidates(name: &str) -> Vec<String> {
+    let mut out = vec![name.to_string()];
+    let lower = name.to_lowercase();
+    if lower != name {
+        out.push(lower.clone());
+    }
+    if let Some(cands) = alias_candidates(&lower) {
+        out.extend(cands.iter().map(|s| s.to_string()));
+    }
+    out
+}
+
+fn proc_matches(proc_name: &str, exe_stem: &str, cand: &str) -> bool {
+    proc_name.eq_ignore_ascii_case(cand) || exe_stem.eq_ignore_ascii_case(cand)
+}
+
+/// Never terminate our own backend: it would orphan the UI with no visible
+/// explanation. Anything else the user named is fair game (explicit intent).
+fn is_self_name(cand: &str) -> bool {
+    const SELF_NAMES: &[&str] = &["smartpc-native", "smartpc_native"];
+    if SELF_NAMES.iter().any(|s| cand.eq_ignore_ascii_case(s)) {
+        return true;
+    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .is_some_and(|stem| cand.eq_ignore_ascii_case(&stem))
+}
+
+#[cfg(unix)]
+fn kill_process(p: &sysinfo::Process, force: bool) -> bool {
+    if force {
+        p.kill_with(sysinfo::Signal::Kill).unwrap_or(false)
+    } else {
+        p.kill()
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_process(p: &sysinfo::Process, _force: bool) -> bool {
+    // No SIGKILL equivalent surfaced here; TerminateProcess it is.
+    p.kill()
+}
+
+/// A zombie entry still occupies its PID but the process is dead.
+/// Treat zombies as gone everywhere liveness is verified.
+fn is_process_alive(sys: &sysinfo::System, pid: u32) -> bool {
+    match sys.process(sysinfo::Pid::from_u32(pid)) {
+        Some(p) => !matches!(
+            p.status(),
+            sysinfo::ProcessStatus::Zombie | sysinfo::ProcessStatus::Dead
+        ),
+        None => false,
+    }
+}
+
+fn tool_close_app(args: &serde_json::Value) -> ToolOutcome {
+    let raw = match arg_str(args, "name") {
+        Ok(n) => n,
+        Err(e) => return e,
+    };
+    // NOTE: mirrors tool_open_app validation; keep in sync.
+    let name = raw.trim().to_string();
+    if name.is_empty() {
+        return err("app name is required");
+    }
+    if name.len() > 128 {
+        return err("app name too long");
+    }
+    if name.contains("..")
+        || name.chars().any(|c| {
+            matches!(
+                c,
+                '/' | '\\'
+                    | ';'
+                    | '&'
+                    | '|'
+                    | '$'
+                    | '`'
+                    | '~'
+                    | '('
+                    | ')'
+                    | '<'
+                    | '>'
+                    | '"'
+                    | '\''
+                    | '*'
+                    | '?'
+                    | '!'
+            ) || c.is_control()
+        })
+    {
+        return err("app name must be a plain name (no paths, flags or shell characters)");
+    }
+    let force = args.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+    let cands = close_candidates(&name);
+    if cands.iter().any(|c| is_self_name(c)) {
+        return err("I won't terminate my own backend process");
+    }
+    let self_pid = std::process::id();
+    let mut sys = sysinfo::System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    let mut targets: Vec<u32> = vec![];
+    for (pid, p) in sys.processes() {
+        let pid_u32 = pid.as_u32();
+        if pid_u32 == self_pid {
+            continue;
+        }
+        let pname = p.name().to_string_lossy();
+        let exe_stem = p
+            .exe()
+            .and_then(|x| x.file_stem())
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if cands.iter().any(|c| proc_matches(&pname, &exe_stem, c)) {
+            targets.push(pid_u32);
+        }
+    }
+    if targets.is_empty() {
+        return err(format!(
+            "no running process matched {name} (use list_processes to find exact names)"
+        ));
+    }
+    let mut killed: Vec<u32> = vec![];
+    for pid in &targets {
+        let spid = sysinfo::Pid::from_u32(*pid);
+        let dead = match sys.process(spid) {
+            Some(p) => kill_process(p, force),
+            None => true, // already gone
+        };
+        if dead {
+            killed.push(*pid);
+        }
+    }
+    std::thread::sleep(std::time::Duration::from_millis(800));
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    let still: Vec<u32> = targets
+        .iter()
+        .copied()
+        .filter(|pid| is_process_alive(&sys, *pid))
+        .collect();
+    if still.is_empty() {
+        ok(format!(
+            "closed {name} ({} process{})",
+            killed.len(),
+            if killed.len() == 1 { "" } else { "es" }
+        ))
+    } else if killed.is_empty() {
+        err(format!(
+            "could not terminate {name} (still running: {}) — try force: true",
+            still
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    } else {
+        err(format!(
+            "closed {} but still running: {} (try force: true)",
+            killed.len(),
+            still
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
     }
 }
 
@@ -344,15 +693,157 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[tokio::test]
-    async fn open_app_spawns_path_binaries() {
-        // /usr/bin/true exits instantly: proves spawn plumbing, harms nothing.
+    async fn open_app_reports_immediate_exit() {
+        // /usr/bin/true exits instantly: honest failure, not fake success.
         let out = execute(
             "open_app",
             &serde_json::json!({"name": "true"}),
             &locked_down(),
         )
         .await;
+        assert!(!out.ok, "instant exit should not count as launched");
+        assert!(out.output.contains("exited immediately"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn open_app_tracks_running_process() {
+        // `yes` runs forever: proves the success path, then we kill it.
+        let out = execute(
+            "open_app",
+            &serde_json::json!({"name": "yes"}),
+            &locked_down(),
+        )
+        .await;
+        if !out.ok && out.output.contains("not found") {
+            eprintln!("SKIP: no `yes` binary on this machine");
+            return;
+        }
         assert!(out.ok, "spawn failed: {}", out.output);
-        assert!(out.output.contains("started true (pid "));
+        let pid: u32 = out
+            .output
+            .split("(pid ")
+            .nth(1)
+            .and_then(|s| s.trim_end_matches(')').parse().ok())
+            .expect("expected a pid in the output");
+        let mut sys = sysinfo::System::new();
+        sys.refresh_processes(
+            sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]),
+            true,
+        );
+        let proc = sys.process(sysinfo::Pid::from_u32(pid));
+        assert!(proc.is_some(), "spawned process should be alive");
+        // Best-effort cleanup: a sibling test may have beaten us to it.
+        if let Some(p) = proc {
+            let _ = p.kill();
+        }
+        // Settle + refresh: zombies (reaped asynchronously) count as gone.
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        sys.refresh_processes(
+            sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]),
+            true,
+        );
+        assert!(
+            !is_process_alive(&sys, pid),
+            "spawned process should be gone"
+        );
+    }
+
+    #[test]
+    fn app_aliases_resolve() {
+        // Pure data shape (no FS needed): every alias group is non-empty.
+        assert!(!TERMINAL_APPS.is_empty());
+        assert!(!BROWSER_APPS.is_empty());
+        assert!(!EDITOR_APPS.is_empty());
+        assert!(!FILES_APPS.is_empty());
+        assert!(!CALC_APPS.is_empty());
+        // Unknown names yield no candidates without touching the FS.
+        assert!(alias_candidates("definitely-not-an-app").is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn path_lookup_finds_shell_binaries() {
+        let hit = find_in_path("sh").expect("sh should exist on linux");
+        assert!(hit.ends_with("sh"));
+    }
+
+    #[tokio::test]
+    async fn close_app_refuses_itself() {
+        // Whatever the binary is called, closing it must be refused —
+        // killing the backend orphans the UI with no explanation.
+        for name in ["smartpc-native", "smartpc_native"] {
+            let out = execute(
+                "close_app",
+                &serde_json::json!({"name": name}),
+                &locked_down(),
+            )
+            .await;
+            assert!(!out.ok, "{name} should be refused");
+            assert!(out.output.contains("own backend"));
+        }
+    }
+
+    #[tokio::test]
+    async fn close_app_misses_gracefully() {
+        let out = execute(
+            "close_app",
+            &serde_json::json!({"name": "definitely-not-running-xyz"}),
+            &locked_down(),
+        )
+        .await;
+        assert!(!out.ok);
+        assert!(out.output.contains("no running process matched"));
+    }
+
+    #[test]
+    fn close_matching_is_case_insensitive() {
+        assert!(proc_matches("Firefox", "", "firefox"));
+        assert!(proc_matches("", "Code", "code"));
+        assert!(!proc_matches("firefox", "", "chrome"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn close_app_roundtrip() {
+        // Spawn `yes`, close it by name, verify only it is gone.
+        // Coexistence-safe: tracks our own pid, ignores siblings.
+        let open = execute(
+            "open_app",
+            &serde_json::json!({"name": "yes"}),
+            &locked_down(),
+        )
+        .await;
+        if !open.ok && open.output.contains("not found") {
+            eprintln!("SKIP: no `yes` binary on this machine");
+            return;
+        }
+        assert!(open.ok, "setup spawn failed: {}", open.output);
+        let pid: u32 = open
+            .output
+            .split("(pid ")
+            .nth(1)
+            .and_then(|s| s.trim_end_matches(')').parse().ok())
+            .expect("expected a pid in the output");
+        let closed = execute(
+            "close_app",
+            &serde_json::json!({"name": "yes"}),
+            &locked_down(),
+        )
+        .await;
+        if !closed.ok && closed.output.contains("no running process matched") {
+            eprintln!("SKIP: someone else reaped our process first");
+            return;
+        }
+        assert!(closed.ok, "close failed: {}", closed.output);
+        let mut sys = sysinfo::System::new();
+        sys.refresh_processes(
+            sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]),
+            true,
+        );
+        assert!(
+            !is_process_alive(&sys, pid),
+            "spawned process should be gone"
+        );
     }
 }

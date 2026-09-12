@@ -58,23 +58,34 @@ struct CompatMessage {
 impl OpenAiCompatClient {
     pub fn new(config: OpenAiCompatConfig) -> Result<Self, ProviderError> {
         let http = Client::builder()
+            .user_agent(concat!("smartpc-native/", env!("CARGO_PKG_VERSION")))
             .timeout(std::time::Duration::from_secs(config.timeout_secs.max(1)))
             .build()
             .map_err(|e| ProviderError::Misconfigured(format!("http client: {e}")))?;
         Ok(Self { http, config })
     }
 
+    pub fn set_api_key(&mut self, key: Option<String>) {
+        self.config.api_key = key;
+    }
+
     pub fn endpoint(&self) -> String {
-        format!(
-            "{}/v1/chat/completions",
-            self.config.base_url.trim_end_matches('/')
-        )
+        // Vendor bases disagree: ollama/llama.cpp are bare hosts
+        // (…:11434) while Zen's base already ends in /v1. Append only
+        // what's missing — a doubled /v1/v1 answers 404+HTML upstream.
+        let base = self.config.base_url.trim_end_matches('/');
+        if base.ends_with("/v1") {
+            format!("{base}/chat/completions")
+        } else {
+            format!("{base}/v1/chat/completions")
+        }
     }
 
     /// Short-timeout GET for capability probing (model lists, liveness).
     /// Separate from chat so detection stays snappy when a server is down.
     pub async fn probe_get(&self, path: &str) -> Result<serde_json::Value, ProviderError> {
         let client = Client::builder()
+            .user_agent(concat!("smartpc-native/", env!("CARGO_PKG_VERSION")))
             .timeout(std::time::Duration::from_secs(3))
             .build()
             .map_err(|e| ProviderError::Misconfigured(format!("http client: {e}")))?;
@@ -261,6 +272,30 @@ mod tests {
             max_tokens: None,
             json_mode: true,
         }
+    }
+
+    #[test]
+    fn endpoint_avoids_double_v1() {
+        let zen = OpenAiCompatClient::new(OpenAiCompatConfig {
+            base_url: "https://opencode.ai/zen/v1".into(),
+            api_key: None,
+            timeout_secs: 5,
+        })
+        .unwrap();
+        assert_eq!(
+            zen.endpoint(),
+            "https://opencode.ai/zen/v1/chat/completions"
+        );
+        let bare = OpenAiCompatClient::new(OpenAiCompatConfig {
+            base_url: "http://127.0.0.1:11434/".into(),
+            api_key: None,
+            timeout_secs: 5,
+        })
+        .unwrap();
+        assert_eq!(
+            bare.endpoint(),
+            "http://127.0.0.1:11434/v1/chat/completions"
+        );
     }
 
     #[tokio::test]
