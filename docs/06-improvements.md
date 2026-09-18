@@ -21,20 +21,20 @@ Nothing here is started — pick top-down.
 
 ## P1 — Correctness fixes (small, verified above)
 
-4. **Type-check the `.tsx` island** (H1): extend `tsconfig.json` include to
-   `src/**/*` (+ `tests/`). Expected: surfaces latent prop/type errors; keep
-   `svelte-check` green after.
-5. **Request timeouts** (M1): ✅ partially done 2026-09-18 — `api()` accepts
-   `timeoutMs` (TimeoutError → `ApiError` 504/`timeout`) and the provider-start
-   call uses 45 s. Still open: default timeouts for chat/run so a hung sidecar
-   can't wedge `orb` at `thinking` forever.
-6. **Harden `ReactIsland`** (M3): `$state` host, single effect, render only on
-   prop change. Removes mount-order fragility.
-7. **Key chat messages by id** (M4) once surfaced, or composite key now.
-8. **Stop mutating global selection on history browse** (M5): view-only
-   `openSession` + explicit "use this session's model" affordance.
-9. **Untangle `saveKey` round-trips** (M6): trust `SaveKeyResponse`
-   (`models` + `suggested_model`) instead of refetching twice.
+✅ Done 2026-09-18 — `svelte-check` clean, `test:e2e` 3/3.
+
+4. ~~**Type-check the `.tsx` island** (H1)~~ — include covers `src/**/*.tsx`;
+   island verified clean via `tsc --listFiles`.
+5. ~~**Request timeouts** (M1)~~ — 30 s default in `api()`; chat 5 min, run
+   10 min, key-save 90 s, `/health` 10 s; localized `chat.timeout` in `send()`.
+6. ~~**Harden `ReactIsland`** (M3)~~ — `$state` host/root, single root per
+   host, signature-gated renders.
+7. ~~**Key chat messages by id** (M4)~~ — `ChatMsg.id` from server, keyed
+   each-block, steps keyed by index.
+8. ~~**Stop mutating global selection on history browse** (M5)~~ —
+   view-only `openSession` + `sessionCombo` + explicit adopt chip.
+9. ~~**Untangle `saveKey` round-trips** (M6)~~ — 6 requests → 2, local
+   `keyStatus` updates.
 
 ## P2 — Security & architecture
 

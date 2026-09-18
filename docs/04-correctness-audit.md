@@ -5,13 +5,8 @@ Method: full read of renderer, electron, scripts, tests, supabase; `svelte-check
 Severity: **H**igh / **M**edium / **L**ow.
 
 ## H1 — `bounce-sidebar.tsx` has zero type coverage
-`tsconfig.json` includes `src/**/*.ts` which does **not** match `.tsx`
-(verified: `tsc --listFiles` shows no `.tsx` in the program; `svelte-check`
-also ignores it). The React island, its `motion` usage and its props contract
-with `SettingsPage.svelte` are unchecked — a breaking prop rename compiles
-green. `tests/` and `scripts/` are likewise outside the program.
-Fix: `"include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", ...]`
-(or `src/**/*`). — `tsconfig.json:13`
+✅ Fixed 2026-09-18: `tsconfig.json` now includes `src/**/*.tsx`
+(plus `tests/**/*.ts`), verified in the `tsc --listFiles` program; clean.
 
 ## H2 — E2E suite is not runnable as-is (no harness wiring)
 ✅ Fixed 2026-09-18: `webServer` boots sidecar (temp db) + vite from
@@ -20,12 +15,10 @@ Fix: `"include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", ...]`
 workflow runs the fast path. See `05-testing.md`.
 
 ## M1 — No request timeout/abort in `lib/api.ts`
-`fetch` has no `AbortSignal.timeout`; a hung sidecar leaves `send()` stuck
-with `orb === "thinking"`, which also blocks all further sends
-(`assistant.store.svelte.ts:226`) and all voice input (`:272`). One wedged
-request bricks the assistant pane until reload.
-Fix: `AbortSignal.timeout(…)` + `orb` reset is already in `finally` — just add
-the signal and a timeout error string.
+✅ Fixed 2026-09-18: `api()` defaults to a 30 s abort budget
+(`timeoutMs: null` opts out, a number overrides); chat 5 min, run 10 min,
+key-save 90 s, provider-start 45 s, `/health` 10 s. Hung sidecar now surfaces
+a localized `chat.timeout` error instead of wedging `orb` at `thinking`.
 
 ## M2 — Refresh token in `localStorage` (XSS-readable)
 `auth.store.svelte.ts:3-25`. Any injected script exfiltrates the long-lived
@@ -35,34 +28,23 @@ a short-lived in-memory token + silent refresh design. No XSS vector is known
 today (no `innerHTML`, deps minimal), so M, not H.
 
 ## M3 — `ReactIsland.svelte` mount is fragile
-`host` is a plain `let`, not `$state` (`ReactIsland.svelte:18`). The first
-`$effect` returns early when `host` is null and, if `bind:this` hasn't been
-assigned before effects run, never re-runs → blank sidebar with no error.
-Works today by mount ordering luck. Second `$effect` re-renders on *every*
-reactive change it touches (`props` object identity changes each parent render
-→ `createElement` churn). Fix: `let host = $state<…>(null)`, single effect
-that creates the root once and renders on `component`/`props` change.
+✅ Fixed 2026-09-18: `host`/`root` are `$state`, root is created once per host
+with cleanup, and re-renders are signature-gated (functions compared by source,
+not identity — documented in the file header).
 
 ## M4 — Chat list keyed by index
-`CenterPanel.svelte:48` — `{#each assistant.messages as m, i (i)}`. `send()`
-replaces the whole array (`store:245-251`); index keys make Svelte patch
-bubbles in place, so per-message state (e.g. the `steps` chips on the last
-bubble) can stick to the wrong node across updates. Key by message id once the
-API exposes one (detail returns `SessionMessage.id`), or key by `i + role + len`.
+✅ Fixed 2026-09-18: `ChatMsg.id` carries the server message id; the each-block
+keys on `m.id ?? local-${i}`, steps key by index.
 
 ## M5 — Opening a session mutates global provider selection
-`openSession` → `selectProvider(session.provider, session.model)`
-(`store:207`). Browsing history POSTs `/v1/ai/select` and surfaces
-`selectError` ("no detectado") for sessions whose provider is now offline —
-reading history shouldn't fail or reconfigure the composer. Split "adopt"
-(explicit user action) from "view".
+✅ Fixed 2026-09-18: `openSession` is view-only; it records `sessionCombo`
+and CenterPanel offers an explicit "use session's model" chip (cleared on
+send/newChat/adopt). Browsing history no longer POSTs `/v1/ai/select`.
 
 ## M6 — `saveKey` triple round-trip + redundant status fetch
-`saveKey` → `refreshKeyStatus` → `loadProviders` (which itself calls
-`refreshKeyStatus` again) → `selectProvider` (`store:140-156`). Works, but 4
-sequential requests where the `SaveKeyResponse` (`models`, `suggested_model`)
-already carries the data. Also `deleteKey` closes the modal even on provider
-mismatch. Low risk, real latency on slow machines.
+✅ Fixed 2026-09-18: `saveKey` folds `SaveKeyResponse.models` into local state
+(6 requests → 2: save + select persist, with a silent-refresh fallback if the
+catalog entry is missing); `deleteKey` flips `keyStatus` locally.
 
 ## L1 — Duplicate scroll-guard logic
 `auth.user` redirect lives in `Shell.svelte:26-31` while `AuthPage` also
