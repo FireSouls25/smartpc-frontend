@@ -27,10 +27,11 @@ src/
                           (vault-first refresh tokens, localStorage fallback)
     assistant/            CenterPanel (orb+chat) · EventsFeed (actions+context) ·
                           SessionsPane (history) · ProviderStart (server start) ·
-                          assistant.api · chat.store (conversation+voice+lifecycle) ·
+                          assistant.api · chat.store (conversation+lifecycle) ·
                           providers.store (catalog/selection/keys/watch) ·
                           sessions.store (directory: list + active pointer)
-    settings/             SettingsPage (#/settings[/section], no gestures yet)
+    voice/                voice.api · voice.store (poll loop, transcript→agent)
+    settings/             SettingsPage (#/settings[/section], incl. voice)
   components/ui/          matrix-orb.svelte · bounce-sidebar.svelte (Svelte port)
   shared/                 Logo · LangTheme · AuthPage · SelectMenu (upward dropdown) ·
                           ApiKeyModal
@@ -57,7 +58,10 @@ vitest.config.ts          unit + contract projects (test:unit / test:contract)
   sessions list/detail/delete; view-only history browse with explicit
   model-adopt; provider select; OpenCode API-key flow with live verification;
   Ollama/llama.cpp local providers.
-- Voice: Web Speech API receptor, final transcripts auto-send. No TTS.
+- Voice: local mic → energy VAD → whisper tiny → agent. Manual mode
+  (press to start, silence auto-finishes) + wake mode ("hey" default,
+  configurable). Transcripts send as user messages; busy agent keeps them in
+  the composer. Mic button + Settings → Voice. See `docs/09-voice.md`.
 - Gestures: cut from the UI (P2 #13) — the toggle switched state with no
   detection pipeline. Returns with the pipeline; tagline unchanged (vision).
 - Supabase: module + dependency removed (P2 #14); design preserved in

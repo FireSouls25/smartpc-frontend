@@ -15,6 +15,7 @@ mod diagnostics;
 mod harness;
 mod platform;
 mod secrets;
+mod stt;
 
 use std::sync::{Arc, Mutex};
 
@@ -100,9 +101,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let store = Store::open(&db_path)?;
     let chat_store = crate::chat::store::ChatStore::open(&db_path)?;
+    // Whisper models live next to the db (<db-dir>/models), overridable
+    // with WHISPER_MODEL_DIR. No new CLI flag: Electron already passes --db.
+    let models_dir = std::env::var("WHISPER_MODEL_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::path::Path::new(&db_path)
+                .parent()
+                .map(|p| p.join("models"))
+                .unwrap_or_else(|| std::path::PathBuf::from("models"))
+        });
     let state = api::AppState {
         store: Arc::new(Mutex::new(store)),
         chat: Arc::new(Mutex::new(chat_store)),
+        voice: crate::stt::VoiceService::new(models_dir),
         jwt_secret: Arc::new(jwt_secret),
         access_ttl_secs: 15 * 60,
         refresh_ttl_secs: 30 * 24 * 3600,

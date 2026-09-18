@@ -236,6 +236,9 @@ mod tests {
             refresh_ttl_secs: 3600,
             sidecar_token: Arc::new("test-token-12345678".into()),
             chat: Arc::new(Mutex::new(ChatStore::open(":memory:").unwrap())),
+            voice: crate::stt::VoiceService::new(
+                std::env::temp_dir().join("smartpc-test-models"),
+            ),
         }
     }
 

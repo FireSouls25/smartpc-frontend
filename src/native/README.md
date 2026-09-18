@@ -12,6 +12,8 @@ src/native/
   src/ai/                local models: provider trait · openai_compat client ·
                          ollama + llamacpp presets · chat route
   src/chat/               sessions · messages · actions · selection (per user)
+  src/stt/                local voice: audio (cpal) · vad · wake · model ·
+                         engine (whisper) · session · routes
   src/harness/            computer-use sandbox: context · tools · exec · agent loop
   src/platform/          shared SQLite setup (each domain owns its schema)
 ```
@@ -35,6 +37,10 @@ serve` when down, waits until it answers) · `POST /v1/ai/select` (validates
   (detail includes messages + actions).
 - Actions (executor hook): `GET /v1/actions?session_id=`,
   `POST /v1/actions`, `PATCH /v1/actions/{id}`. All user-scoped.
+- Voice (local STT): `GET /v1/voice/status`, `POST /v1/voice/listen|stop`,
+  `GET /v1/voice/events?cursor=` (25 s long-poll; events: capturing, wake,
+  transcript, error, end). Sidecar-gated, no user needed; transcripts are
+  never persisted here. See `frontend/docs/09-voice.md`.
 
 ## Harness (computer use)
 
@@ -94,7 +100,7 @@ Anything inconclusive surfaces as `unverified`, never as a false "invalid".
 ## Dev
 
 ```bash
-cargo build                    # from src/native/
+cargo build                    # from src/native/ (needs cmake + C++; libasound2-dev on Linux)
 cargo test
 ./target/debug/smartpc-native --port 18080 --token dev-token-min-16 --db /tmp/dev.db
 curl localhost:18080/health

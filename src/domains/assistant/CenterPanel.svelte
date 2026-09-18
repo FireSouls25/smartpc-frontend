@@ -5,6 +5,7 @@
   import { chatStore as chat } from "./chat.store.svelte";
   import { providerStore as providers } from "./providers.store.svelte";
   import { sessionStore as sessions } from "./sessions.store.svelte";
+  import { voice } from "../voice/voice.store.svelte";
   import { t } from "../../lib/i18n.svelte";
 
   const orbLabels = () => ({
@@ -94,12 +95,16 @@
       <button
         type="button"
         class="icon-btn shrink-0"
-        style={chat.listening
+        style={voice.capturing
           ? "border-color: var(--danger); color: var(--danger);"
-          : ""}
-        onclick={() => chat.toggleListening()}
-        aria-label={t("orb.listening")}
-        aria-pressed={chat.listening}
+          : voice.listening
+            ? "border-color: var(--accent); color: var(--accent);"
+            : ""}
+        onclick={() => voice.toggle()}
+        aria-label={voice.mode === "wake"
+          ? `${t("orb.listening")} (${voice.wakeWord})`
+          : t("orb.listening")}
+        aria-pressed={voice.listening}
       >
         <svg
           viewBox="0 0 24 24"
@@ -136,8 +141,11 @@
         {t("chat.send")}
       </button>
     </form>
-    {#if chat.voiceError}
-      <p class="error-box">{chat.voiceError}</p>
+    {#if voice.error}
+      <p class="error-box">{voice.error}</p>
+    {/if}
+    {#if voice.phase === "starting"}
+      <p class="faint text-xs">{t("voice.starting")}</p>
     {/if}
 
     <div class="flex flex-wrap items-center gap-2">

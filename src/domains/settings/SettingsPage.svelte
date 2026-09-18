@@ -6,6 +6,8 @@
   import { getTheme, setTheme, type Theme } from "../../lib/theme.svelte";
   import { providerStore as providers } from "../assistant/providers.store.svelte";
   import ProviderStart from "../assistant/ProviderStart.svelte";
+  import { voice, DEFAULT_WAKE_WORD } from "../voice/voice.store.svelte";
+  import { voiceApi, type VoiceMode, type VoiceStatus } from "../voice/voice.api";
   import SelectMenu from "../../shared/SelectMenu.svelte";
   import { api } from "../../lib/api";
 
@@ -14,7 +16,7 @@
 
   // Gestures were cut here on purpose (P2 #13): the toggle switched state
   // with no detection pipeline behind it. It returns with the pipeline.
-  const sections = ["general", "ai", "account"] as const;
+  const sections = ["general", "ai", "voice", "account"] as const;
   const clamp = (n: number): number => Math.min(sections.length - 1, Math.max(0, n));
   // Local state synced FROM the route (Back button, deep links); writes go
   // through selectSection which replaces the hash.
@@ -49,6 +51,10 @@
       diagLoaded = true;
       void loadDiag();
     }
+    if (section === 2 && !voiceLoaded) {
+      voiceLoaded = true;
+      void loadVoiceStatus();
+    }
   });
 
   async function loadDiag(): Promise<void> {
@@ -60,6 +66,18 @@
       diagLines = [];
     } finally {
       diagLoading = false;
+    }
+  }
+
+  // Voice status (mic + model readiness). Same lazy pattern as diagnostics.
+  let voiceStatus = $state<VoiceStatus | null>(null);
+  let voiceLoaded = $state(false);
+
+  async function loadVoiceStatus(): Promise<void> {
+    try {
+      voiceStatus = await voiceApi.status();
+    } catch {
+      voiceStatus = null;
     }
   }
 
@@ -235,6 +253,66 @@
               style="max-height: 16rem; overflow: auto; border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.5rem 0.75rem; background: var(--card);"
               >{diagLines.length > 0 ? diagLines.join("\n") : t("settings.diagEmpty")}</pre
             >
+          </div>
+        </div>
+      {:else if section === 2}
+        <div class="flex flex-col gap-4">
+          <p class="muted text-sm">{t("voice.localNote")}</p>
+          <div class="flex flex-wrap gap-2">
+            <span class="chip">
+              <span
+                class="dot"
+                style="background: {voiceStatus?.mic
+                  ? 'var(--success)'
+                  : 'var(--warn)'};"
+              ></span>
+              {t("voice.mic")}: {voiceStatus
+                ? voiceStatus.mic
+                  ? t("voice.ready")
+                  : t("voice.notReady")
+                : "…"}
+            </span>
+            <span class="chip">
+              <span
+                class="dot"
+                style="background: {voiceStatus?.model_ready
+                  ? 'var(--success)'
+                  : 'var(--warn)'};"
+              ></span>
+              {t("voice.model")}: {voiceStatus?.model ?? "…"}
+            </span>
+          </div>
+          <div>
+            <p class="label">{t("voice.mode")}</p>
+            <div class="flex flex-wrap gap-2">
+              {#each (["manual", "wake"] as VoiceMode[]) as v (v)}
+                <button
+                  class="chip"
+                  style={voice.mode === v
+                    ? "border-color: var(--accent); color: var(--fg);"
+                    : ""}
+                  onclick={() => voice.setMode(v)}
+                  aria-pressed={voice.mode === v}
+                >
+                  {v === "manual" ? t("voice.modeManual") : t("voice.modeWake")}
+                </button>
+              {/each}
+            </div>
+          </div>
+          <div>
+            <label class="label" for="voice-wake">{t("voice.wakeWord")}</label>
+            <input
+              id="voice-wake"
+              class="field"
+              style="border-radius: 1rem; max-width: 16rem;"
+              type="text"
+              maxlength={32}
+              autocomplete="off"
+              placeholder={DEFAULT_WAKE_WORD}
+              value={voice.wakeWord}
+              oninput={(e) => voice.setWakeWord(e.currentTarget.value)}
+            />
+            <p class="faint mt-1 text-xs">{t("voice.wakeHint")}</p>
           </div>
         </div>
       {:else}

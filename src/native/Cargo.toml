@@ -27,6 +27,11 @@ chrono = { version = "0.4", features = ["serde"] }
 email_address = "0.2"
 # Local-model providers: OpenAI-compatible chat (Ollama, llama.cpp server).
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
+# Local voice in (mic → VAD → whisper): needs cmake + a C++ compiler at
+# build time (whisper.cpp is compiled from bundled sources), plus
+# libasound2-dev on Linux (cpal/ALSA). See docs/09-voice.md.
+cpal = "0.18"
+whisper-rs = "0.16"
 sysinfo = "0.39.6"
 active-win-pos-rs = "0.11.0"
 enigo = "0.6"

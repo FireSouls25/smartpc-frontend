@@ -108,6 +108,16 @@ test("settings route deep-links sections", async ({ page }) => {
   expect(page.url()).toContain("#/settings/1");
   await page.screenshot({ path: "test-results/layout-settings-ai.png" });
 
+  // Voice section renders its controls without a mic present.
+  await page
+    .getByText(/Voz|Voice/)
+    .first()
+    .click();
+  await expect(page.getByText(/Modo|Mode/).first()).toBeVisible();
+  await expect(page.getByPlaceholder("hey")).toBeVisible();
+  expect(page.url()).toContain("#/settings/2");
+  await page.screenshot({ path: "test-results/layout-settings-voice.png" });
+
   // Unknown hashes fall back home.
   await page.goto(`${APP}#/nope`, { waitUntil: "networkidle" });
   await expect(page.getByText("Chats").first()).toBeVisible({ timeout: 20000 });

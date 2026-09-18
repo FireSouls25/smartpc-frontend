@@ -14,3 +14,4 @@ these files describe **what the code actually does**.
 | `06-improvements.md`          | Proposed improvements, prioritized                            |
 | `07-provider-availability.md` | Availability watch + auto-start (implemented 2026-09-18)      |
 | `08-sync-design.md`           | Remote sync design (future; client module removed P2 #14)     |
+| `09-voice.md`                 | Local voice input: mic → VAD → whisper → agent                |

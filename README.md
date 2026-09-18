@@ -13,10 +13,11 @@ src/
                   (vault-first refresh tokens, localStorage fallback on web)
     assistant/    CenterPanel (orb + chat) · EventsFeed (actions) ·
                   SessionsPane (chat history) · ProviderStart (server start) ·
-                  assistant.api · chat.store (conversation+voice+lifecycle) ·
+                  assistant.api · chat.store (conversation+lifecycle) ·
                   providers.store (catalog/selection/keys/3s watch) ·
                   sessions.store (directory: list + active pointer)
-    settings/     SettingsPage (General · AI · Account)
+    voice/        voice.api · voice.store (poll loop, transcript→agent)
+    settings/     SettingsPage (General · AI · Voice · Account)
   components/ui/  matrix-orb.svelte · bounce-sidebar.svelte (Svelte ports)
   lib/
     theme.css     THE single theme file (mono light/dark, per-pane whites)
@@ -58,6 +59,8 @@ format:check + unit tests. `npm run test:e2e` → Playwright fast path
 
 Chat turns persist per user (sessions + history in the sidecar); plain chat
 never creates actions — those come only from command execution. Browsing
-history never reselects the provider — adopt explicitly. Renderer ↔ Main
+history never reselects the provider — adopt explicitly. Voice is local:
+mic → VAD → whisper tiny in the sidecar; transcripts send as user messages
+(manual button or "hey" wake word, silence auto-finishes). Renderer ↔ Main
 speak through `window.smartpc` (preload allow-list); raw Node never
 reaches the UI. Refresh tokens rest in the OS keychain under Electron.

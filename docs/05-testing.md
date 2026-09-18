@@ -48,7 +48,8 @@ types), error envelopes (login 401, register 400, user-gate 401, sidecar-gate
 `playwright.config.ts`: `testDir ./tests`, 120 s timeout,
 `channel: chromium-headless-shell`, 1600×900, `reducedMotion: reduce`
 (deterministic WAAPI/orb), plus `webServer` (sidecar + vite, ports from one
-place, `reuseExistingServer` locally).
+place, `reuseExistingServer` locally). The voice settings section is covered
+structurally (headless has no mic — asserts graceful `notReady`).
 
 Verified 2026-09-18: verify green, contract 7/7, `test:e2e` 5/5 in ~18 s,
 `test:e2e:all` 6/6 in ~30 s (incl. real Ollama inference + persistence).

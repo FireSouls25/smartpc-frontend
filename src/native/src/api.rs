@@ -21,6 +21,7 @@ use tower_http::{
 use crate::{
     auth::{self, model::AuthError, store::Store},
     chat::store::ChatStore,
+    stt::VoiceService,
 };
 
 /// Protocol version: bump on any incompatible HTTP contract change.
@@ -35,6 +36,7 @@ pub struct AppState {
     pub refresh_ttl_secs: i64,
     pub sidecar_token: Arc<String>,
     pub chat: Arc<Mutex<ChatStore>>,
+    pub voice: VoiceService,
 }
 
 /// User id placed on the request by [`require_user`].
@@ -145,6 +147,10 @@ pub fn router(state: AppState) -> Router {
             "/v1/ai/providers/{id}/start",
             post(crate::ai::routes::start_provider),
         )
+        .route("/v1/voice/status", get(crate::stt::routes::status))
+        .route("/v1/voice/listen", post(crate::stt::routes::listen))
+        .route("/v1/voice/stop", post(crate::stt::routes::stop))
+        .route("/v1/voice/events", get(crate::stt::routes::events))
         .route("/v1/support/diagnostics", get(crate::diagnostics::handler))
         .merge(user_ai)
         .route_layer(middleware::from_fn_with_state(

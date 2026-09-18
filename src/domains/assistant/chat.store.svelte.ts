@@ -35,32 +35,11 @@ let messages = $state<ChatMsg[]>(greeting());
 let events = $state<AppEvent[]>([]);
 let contextUsed = $state(0);
 let draft = $state("");
-let voiceError = $state("");
 
-// Minimal Web Speech API surface (no DOM lib dependency on the event
-// shapes; replaces the previous `any` + eslint-disable).
-interface SpeechRecognitionResultLike {
-  readonly isFinal: boolean;
-  readonly 0: { readonly transcript: string };
+/** Voice sessions drive the orb while capturing (see voice store). */
+function setOrb(next: OrbState): void {
+  orb = next;
 }
-
-interface SpeechRecognitionEventLike {
-  readonly resultIndex: number;
-  readonly results: ArrayLike<SpeechRecognitionResultLike>;
-}
-
-interface SpeechRecognitionLike {
-  lang: string;
-  interimResults: boolean;
-  maxAlternatives: number;
-  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
-  onerror: ((event: { error?: string }) => void) | null;
-  onend: (() => void) | null;
-  start(): void;
-  stop(): void;
-}
-
-let recognition: SpeechRecognitionLike | null = null;
 
 export function toEvent(a: {
   id: string;
@@ -124,16 +103,12 @@ async function deleteSession(id: string): Promise<void> {
 /**
  * Real send: the turn is persisted server-side (session + history).
  * Plain chat never creates actions — those come only from command execution.
+ * Returns whether the text was dispatched (false = dropped: empty or the
+ * agent is still thinking; callers keep the text instead of losing it).
  */
-async function send(text: string): Promise<void> {
+async function send(text: string): Promise<boolean> {
   const clean = text.trim();
-  if (!clean || orb === "thinking") return;
-  try {
-    recognition?.stop();
-  } catch {
-    /* not listening */
-  }
-  voiceError = "";
+  if (!clean || orb === "thinking") return false;
   messages = [...messages, { role: "user", text: clean }];
   draft = "";
   orb = "thinking";
@@ -173,68 +148,7 @@ async function send(text: string): Promise<void> {
   } finally {
     orb = "idle";
   }
-}
-
-function speechCtor(): (new () => SpeechRecognitionLike) | null {
-  const w = window as unknown as Record<string, unknown>;
-  const ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
-  return ctor as (new () => SpeechRecognitionLike) | null;
-}
-
-/**
- * Real voice receptor (Web Speech API: works in Electron/Chromium).
- * Final transcripts auto-send to the active local model.
- */
-function toggleListening(): void {
-  if (orb === "thinking") return;
-  if (orb === "listening") {
-    try {
-      recognition?.stop();
-    } catch {
-      /* already stopped */
-    }
-    return;
-  }
-  const Ctor = speechCtor();
-  voiceError = "";
-  if (!Ctor) {
-    voiceError = t("voice.unsupported");
-    return;
-  }
-  try {
-    recognition = new Ctor();
-  } catch {
-    voiceError = t("voice.error");
-    return;
-  }
-  recognition.lang = getLang() === "es" ? "es-ES" : "en-US";
-  recognition.interimResults = true;
-  recognition.maxAlternatives = 1;
-  recognition.onresult = (e) => {
-    let interim = "";
-    let fin = "";
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      const r = e.results[i];
-      if (r.isFinal) fin += r[0].transcript;
-      else interim += r[0].transcript;
-    }
-    if (interim) draft = interim;
-    if (fin.trim()) void send(fin);
-  };
-  recognition.onerror = (e: { error?: string }) => {
-    voiceError = t("voice.error") + (e?.error ? ` (${e.error})` : "");
-    if (orb === "listening") orb = "idle";
-  };
-  recognition.onend = () => {
-    if (orb === "listening") orb = "idle";
-  };
-  try {
-    recognition.start();
-    orb = "listening";
-  } catch {
-    voiceError = t("voice.error");
-    orb = "idle";
-  }
+  return true;
 }
 
 export const chatStore = {
@@ -250,20 +164,14 @@ export const chatStore = {
   get contextUsed(): number {
     return contextUsed;
   },
-  get listening(): boolean {
-    return orb === "listening";
-  },
   get draft(): string {
     return draft;
   },
-  get voiceError(): string {
-    return voiceError;
-  },
   setDraft,
+  setOrb,
   newChat,
   openSession,
   adoptSessionCombo,
   deleteSession,
-  toggleListening,
   send,
 };

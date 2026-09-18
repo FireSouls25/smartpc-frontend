@@ -32,12 +32,15 @@ Each business domain owns screens + API client + runes stores:
   sessions/actions/keys/start) plus three acyclic stores:
   `providers.store` (catalog, selection, keys, start, 3 s watch),
   `sessions.store` (directory: list, active pointer, viewed combo — imports
-  only the API client), `chat.store` (conversation, voice, context meter,
-  lifecycle orchestrating the other two). Voice lives in chat: it is coupled
-  to orb/draft/send, and splitting it would add indirection, not decoupling.
+  only the API client), `chat.store` (conversation, context meter, lifecycle
+  orchestrating the other two; `send` returns whether it dispatched, `setOrb`
+  lets voice drive the orb).
   `run` → `sessionDetail` → re-render (tool turns filtered out) → `refreshSessions`.
-- `domains/settings/` — `SettingsPage.svelte` only; reads the providers store,
-  no store of its own.
+- `domains/voice/` — `voice.api.ts` + `voice.store.svelte.ts` (prefs, poll
+  loop with cursor + generation guard, transcript → `chat.send`, busy
+  fallback to draft). Imports chat, never the reverse.
+- `domains/settings/` — `SettingsPage.svelte` only; reads providers + voice
+  stores, no store of its own.
 
 Transversal code: `lib/api.ts` (base resolution: bridge → env → `127.0.0.1:18080`;
 `X-Sidecar-Token` gate + `Authorization: Bearer` user token; 30 s default
@@ -79,6 +82,9 @@ has no React: `react`/`react-dom`/`motion`/`@vitejs/plugin-react` removed,
   (detail = session + messages + actions).
 - Actions: `GET /v1/actions?session_id=`, `POST /v1/actions`,
   `PATCH /v1/actions/{id}`. Plain chat never creates actions.
+- Voice: `GET /v1/voice/status`, `POST /v1/voice/listen|stop`,
+  `GET /v1/voice/events?cursor=` (25 s long-poll). Transcripts are not
+  persisted here — the renderer feeds them to the agent itself.
 - Support: `GET /v1/support/diagnostics` (stderr mirror for the UI).
 
 ## Data & identity

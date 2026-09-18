@@ -150,4 +150,32 @@ describe("sidecar contract", () => {
       expect(body.error.code).toBe("not_startable");
     }
   });
+
+  test("voice status has a stable shape (no mic needed)", async () => {
+    const res = await fetch(`${BASE}/v1/voice/status`, { headers: gate });
+    expect(res.ok).toBe(true);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(typeof body["listening"]).toBe("boolean");
+    expect(typeof body["capturing"]).toBe("boolean");
+    expect(body["mode"] === null || typeof body["mode"] === "string").toBe(
+      true,
+    );
+    expect(typeof body["model"]).toBe("string");
+    expect(
+      body["wake_word"] === null || typeof body["wake_word"] === "string",
+    ).toBe(true);
+    expect(typeof body["mic"]).toBe("boolean");
+    expect(typeof body["model_ready"]).toBe("boolean");
+  });
+
+  test("voice listen validates before touching hardware", async () => {
+    const bad = await fetch(`${BASE}/v1/voice/listen`, {
+      method: "POST",
+      headers: gate,
+      body: JSON.stringify({ mode: "shout" }),
+    });
+    expect(bad.status).toBe(400);
+    const body = (await bad.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("invalid_mode");
+  });
 });

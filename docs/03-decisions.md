@@ -58,9 +58,15 @@ reconciliation pass.
     migration; vault failure degrades, never locks out.
 17. **Stores split acyclically (P2 #11).** `sessions` imports only the API
     client; `providers` is standalone; `chat` drives both and nothing imports
-    back. Voice stays in chat (coupled to orb/draft/send — splitting would
-    add indirection, not decoupling). Dropped `sessionsError` (written,
+    back. Dropped `sessionsError` (written,
     never read by any component).
 18. **Sidebar ported to Svelte (P2 #15).** Same props contract, WAAPI arc dot,
     reduced-motion aware; `react`/`react-dom`/`motion` deleted, `dist/`
     464K → 132K.
+19. **Local voice in the sidecar, not the browser.** Mic → energy VAD →
+    whisper tiny → text, one global session, long-polled events; transcripts
+    feed the existing agent path (busy → draft fallback). Wake word is textual
+    match over transcribed onsets ("hey" default) — no acoustic spotter, no
+    continuous inference, stated limits in `docs/09-voice.md`. The old Web
+    Speech receptor was removed, not kept as fallback (cloud STT contradicts
+    local-first).
