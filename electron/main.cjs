@@ -1,8 +1,9 @@
 // Smart PC — Electron main process (Node side, privileged).
 // Spawns the Rust sidecar (local backend) and shows its UI.
 // The renderer NEVER gets raw Node APIs: only window.smartpc from preload.cjs.
-const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, safeStorage } = require("electron");
 const path = require("node:path");
+const fs = require("node:fs");
 const { spawn } = require("node:child_process");
 const crypto = require("node:crypto");
 
@@ -93,6 +94,75 @@ ipcMain.handle("system:ping", () => ({
   ok: true,
   at: new Date().toISOString(),
 }));
+
+// Token vault: refresh tokens encrypted at rest with the OS keychain
+// (DPAPI / Keychain / libsecret) instead of renderer localStorage.
+// Stored as {key: base64(encrypted)} in userData; values capped so a
+// compromised renderer cannot turn this into arbitrary file storage.
+function vaultPath() {
+  return path.join(app.getPath("userData"), "smartpc-vault.json");
+}
+
+function readVaultFile() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(vaultPath(), "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeVaultFile(map) {
+  fs.writeFileSync(vaultPath(), JSON.stringify(map), { mode: 0o600 });
+}
+
+const vaultOk = (key, value) =>
+  typeof key === "string" &&
+  key.length > 0 &&
+  key.length <= 128 &&
+  (value === undefined ||
+    (typeof value === "string" && value.length <= 16 * 1024));
+
+ipcMain.handle("vault:available", () => safeStorage.isEncryptionAvailable());
+
+ipcMain.handle("vault:set", (_e, key, value) => {
+  if (!safeStorage.isEncryptionAvailable() || !vaultOk(key, value)) {
+    return { ok: false };
+  }
+  try {
+    const map = readVaultFile();
+    map[key] = safeStorage.encryptString(value).toString("base64");
+    writeVaultFile(map);
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+});
+
+ipcMain.handle("vault:get", (_e, key) => {
+  if (!safeStorage.isEncryptionAvailable() || !vaultOk(key)) {
+    return { value: null };
+  }
+  const enc = readVaultFile()[key];
+  if (typeof enc !== "string") return { value: null };
+  try {
+    return { value: safeStorage.decryptString(Buffer.from(enc, "base64")) };
+  } catch {
+    return { value: null };
+  }
+});
+
+ipcMain.handle("vault:delete", (_e, key) => {
+  if (!vaultOk(key)) return { ok: false };
+  try {
+    const map = readVaultFile();
+    delete map[key];
+    writeVaultFile(map);
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+});
 
 app.whenReady().then(async () => {
   try {

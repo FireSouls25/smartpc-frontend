@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { auth } from "../domains/auth/auth.store.svelte";
-  import { assistant } from "../domains/assistant/assistant.store.svelte";
-  import { navigate } from "./router.svelte";
+  import { providerStore as providers } from "../domains/assistant/providers.store.svelte";
+  import { sessionStore as sessions } from "../domains/assistant/sessions.store.svelte";
+  import { navigate, route, syncAuthRoute } from "./router.svelte";
   import TopBar from "./TopBar.svelte";
   import EventsFeed from "../domains/assistant/EventsFeed.svelte";
   import CenterPanel from "../domains/assistant/CenterPanel.svelte";
@@ -12,7 +13,9 @@
   import { fetchHealth, SIDECAR_PROTOCOL } from "../lib/api";
   import { t } from "../lib/i18n.svelte";
 
-  let view = $state<"main" | "settings">("main");
+  // Settings is a route (#/settings[/section]), not local state: deep-linkable,
+  // browser back works, reload keeps the page.
+  const view = () => (route.name === "settings" ? "settings" : "main");
   let protoOk = $state(true);
 
   onMount(() => {
@@ -24,16 +27,16 @@
   });
 
   onMount(() => {
-    if (!auth.user) navigate("login");
-    else {
-      void assistant
+    syncAuthRoute(auth.user);
+    if (auth.user) {
+      void providers
         .loadProviders()
-        .then(() => assistant.refreshSessions())
-        .then(() => assistant.startProviderWatch());
+        .then(() => sessions.refreshSessions())
+        .then(() => providers.startProviderWatch());
     }
   });
 
-  onDestroy(() => assistant.stopProviderWatch());
+  onDestroy(() => providers.stopProviderWatch());
 </script>
 
 <div class="dot-bg min-h-dvh lg:h-dvh lg:overflow-hidden">
@@ -48,8 +51,8 @@
         {t("protocol.mismatch")}
       </div>
     {/if}
-    <TopBar onSettings={() => (view = "settings")} />
-    {#if view === "main"}
+    <TopBar onSettings={() => navigate("settings")} />
+    {#if view() === "main"}
       <div
         class="grid flex-1 gap-4 pb-4 md:pb-8 lg:min-h-0 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_300px]"
       >
@@ -65,7 +68,10 @@
       </div>
     {:else}
       <div class="min-h-0 flex-1 pb-8 lg:overflow-y-auto">
-        <SettingsPage onBack={() => (view = "main")} />
+        <SettingsPage
+          initialSection={route.settingsSection}
+          onBack={() => navigate("")}
+        />
       </div>
     {/if}
     <ApiKeyModal />

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { assistant } from "./assistant.store.svelte";
+  import { chatStore as chat } from "./chat.store.svelte";
+  import { providerStore as providers } from "./providers.store.svelte";
   import { t } from "../../lib/i18n.svelte";
 
   function color(status: string): string {
@@ -27,9 +28,9 @@
   }
 
   function ctxPct(): number {
-    const w = assistant.contextWindow;
+    const w = providers.contextWindow;
     if (w == null || w <= 0) return 0;
-    return Math.min(100, (assistant.contextUsed / w) * 100);
+    return Math.min(100, (chat.contextUsed / w) * 100);
   }
 
   function ctxColor(): string {
@@ -49,12 +50,12 @@
     <div class="flex items-center justify-between gap-2">
       <p class="text-[11px] font-bold">{t("context.label")}</p>
       <p class="font-mono text-[11px]">
-        {fmtK(assistant.contextUsed)} / {assistant.contextWindow == null
+        {fmtK(chat.contextUsed)} / {providers.contextWindow == null
           ? "—"
-          : fmtK(assistant.contextWindow)}
+          : fmtK(providers.contextWindow)}
       </p>
     </div>
-    {#if assistant.contextWindow != null}
+    {#if providers.contextWindow != null}
       <div
         class="mt-1.5 h-1 overflow-hidden rounded-full"
         style="background: var(--border);"
@@ -66,11 +67,11 @@
       </div>
     {/if}
   </div>
-  {#if assistant.events.length === 0}
+  {#if chat.events.length === 0}
     <p class="faint px-1 text-xs leading-relaxed">{t("events.empty")}</p>
   {/if}
   <ul class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
-    {#each assistant.events as ev (ev.id)}
+    {#each chat.events as ev (ev.id)}
       <li class="rounded-2xl border p-3 transition" style={box(ev.status)}>
         <div class="flex items-center gap-2">
           <span

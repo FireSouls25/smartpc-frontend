@@ -10,6 +10,13 @@ declare global {
       ping: () => Promise<{ ok: boolean; at: string }>;
       /** Rust sidecar endpoint + per-launch token, injected by main. */
       sidecar?: { url: string; token: string };
+      /** OS-keychain token vault. Absent outside Electron. */
+      vault?: {
+        available: () => Promise<boolean>;
+        set: (key: string, value: string) => Promise<{ ok: boolean }>;
+        get: (key: string) => Promise<{ value: string | null }>;
+        delete: (key: string) => Promise<{ ok: boolean }>;
+      };
     };
   }
 }

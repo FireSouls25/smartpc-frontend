@@ -20,43 +20,50 @@ sidecar from `resources/bin` instead of `src/native/target/debug`.
 ```
 src/
   main.ts                 entry: theme.css + mount App
-  app/                    App.svelte (boot+restore) · Shell.svelte (3-pane layout)
-                          TopBar.svelte · router.svelte.ts (hash router)
+  app/                    App.svelte (boot+restore+route guard) · Shell.svelte
+                          TopBar.svelte · router.svelte.ts (hash routes + auth guard)
   domains/
-    auth/                 LoginPage · RegisterPage · auth.api · auth.store (runes)
-    assistant/            CenterPanel (orb+chat) · EventsFeed (actions+context)
-                          SessionsPane (history) · assistant.api · assistant.store
-    settings/             SettingsPage (Bounce Sidebar sections incl. account)
-  components/ui/          matrix-orb.svelte (Svelte port) · bounce-sidebar.tsx (React island)
-  shared/                 Logo · LangTheme · AuthPage · SelectMenu (upward dropdown)
-                          ReactIsland (React-in-Svelte bridge) · ApiKeyModal
-  lib/                    api.ts (typed fetch) · theme.css (THE theme file)
+    auth/                 LoginPage · RegisterPage · auth.api · auth.store
+                          (vault-first refresh tokens, localStorage fallback)
+    assistant/            CenterPanel (orb+chat) · EventsFeed (actions+context) ·
+                          SessionsPane (history) · ProviderStart (server start) ·
+                          assistant.api · chat.store (conversation+voice+lifecycle) ·
+                          providers.store (catalog/selection/keys/watch) ·
+                          sessions.store (directory: list + active pointer)
+    settings/             SettingsPage (#/settings[/section], no gestures yet)
+  components/ui/          matrix-orb.svelte · bounce-sidebar.svelte (Svelte port)
+  shared/                 Logo · LangTheme · AuthPage · SelectMenu (upward dropdown) ·
+                          ApiKeyModal
+  lib/                    api.ts (typed fetch, 30 s default budget) · theme.css
                           theme.svelte · i18n/ (es contract, en) · i18n.svelte · cn.ts
-  supabase/               remote sync client — unwired (accounts+preferences only)
-  native/                 Rust sidecar (see its README.md)
-electron/                 main.cjs (spawns sidecar, privileged) · preload.cjs (bridge)
-scripts/                  electron-dev.mjs (hardened dev runner) · kill-strays.mjs
-tests/                    3 Playwright specs (manual harness, see 05-testing.md)
+electron/                 main.cjs (sidecar spawn + token vault) · preload.cjs
+scripts/                  electron-dev.mjs (cargo build + vite + electron)
+tests/                    smoke · layout (incl. @slow inference) · ai-keys ·
+                          helpers (ports + user seeding)
 ```
 
-## State snapshot (verified 2026-09-18)
+## State snapshot (verified 2026-09-18, P2 landed)
 
-- `svelte-check`: **0 errors, 0 warnings**. `tsc --noEmit`: clean — but the
-  `.tsx` island is **not in the program** (see 04-correctness-audit.md).
+- `svelte-check`: **0 errors, 0 warnings**. `tsc --noEmit`: clean, `.tsx`
+  included (no `.tsx` sources remain — the island is Svelte now).
 - Auth (register/login/refresh/logout/delete) works against the sidecar;
-  access token in memory, refresh token in `localStorage`.
+  access token in memory, refresh token in the OS-keychain vault under
+  Electron (localStorage fallback on web + one-time migration).
 - Chat: persisted turns via `POST /v1/ai/run` (agentic, tools→actions);
-  sessions list/detail/delete; provider select; OpenCode API-key flow with
-  live verification; Ollama/llama.cpp local providers.
+  sessions list/detail/delete; view-only history browse with explicit
+  model-adopt; provider select; OpenCode API-key flow with live verification;
+  Ollama/llama.cpp local providers.
 - Voice: Web Speech API receptor, final transcripts auto-send. No TTS.
-- Gestures: **UI toggle only** — no camera, no detection pipeline.
-  `assistant.gesturesOn` is state with no consumer besides the switch.
-- Supabase: code present, **no UI imports it** (except nothing — grep shows
-  zero imports from `src/supabase` outside itself).
+- Gestures: cut from the UI (P2 #13) — the toggle switched state with no
+  detection pipeline. Returns with the pipeline; tagline unchanged (vision).
+- Supabase: module + dependency removed (P2 #14); design preserved in
+  `docs/08-sync-design.md`. Bundle: `dist/` 464K → 132K (JS 104K).
 - Diagnostics: sidecar stderr mirror at `GET /v1/support/diagnostics`,
   viewable/copyable in Settings → AI.
-- Protocol guard: `SIDECAR_PROTOCOL = 2` (`src/lib/api.ts:27`); Shell warns
+- Protocol guard: `SIDECAR_PROTOCOL = 2` (`src/lib/api.ts`); Shell warns
   on mismatch with `/health`.
 - Provider availability is polled every 3 s (silent, paused when the tab is
   hidden); a startable-but-offline server (Ollama) offers a one-click Start
   in the chat pane and Settings → AI. See `docs/07-provider-availability.md`.
+- Routes: `#/login | #/register | #/settings[/section] | #/` with one
+  `syncAuthRoute` guard and an unknown-hash fallback to home.

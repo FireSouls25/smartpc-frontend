@@ -24,38 +24,46 @@ Hard boundary: renderer ↔ main speak **only** through `window.smartpc`
 
 ## Renderer: domain ownership
 
-Each business domain owns screens + API client + runes store:
+Each business domain owns screens + API client + runes stores:
 
 - `domains/auth/` — `auth.api.ts` (6 endpoints), `auth.store.svelte.ts`
-  (module-level `$state`: `user`, in-memory `accessToken`, `localStorage`
-  refresh token). `login → register → restore → logout → deleteAccount`.
+  (`user`, in-memory access token, vault-first refresh tokens).
 - `domains/assistant/` — `assistant.api.ts` (providers/selection/chat/run/
-  sessions/actions/keys), `assistant.store.svelte.ts` (~416 lines, single
-  god-store: orb, messages, events, sessions, providers, keys, voice, draft).
+  sessions/actions/keys/start) plus three acyclic stores:
+  `providers.store` (catalog, selection, keys, start, 3 s watch),
+  `sessions.store` (directory: list, active pointer, viewed combo — imports
+  only the API client), `chat.store` (conversation, voice, context meter,
+  lifecycle orchestrating the other two). Voice lives in chat: it is coupled
+  to orb/draft/send, and splitting it would add indirection, not decoupling.
   `run` → `sessionDetail` → re-render (tool turns filtered out) → `refreshSessions`.
-- `domains/settings/` — `SettingsPage.svelte` only; reads both stores, no
-  store of its own.
+- `domains/settings/` — `SettingsPage.svelte` only; reads the providers store,
+  no store of its own.
 
 Transversal code: `lib/api.ts` (base resolution: bridge → env → `127.0.0.1:18080`;
-`X-Sidecar-Token` gate + `Authorization: Bearer` user token), `lib/theme.*`,
-`lib/i18n.*`, `shared/` primitives.
+`X-Sidecar-Token` gate + `Authorization: Bearer` user token; 30 s default
+abort budget with per-endpoint overrides), `lib/theme.*`, `lib/i18n.*`,
+`shared/` primitives. `sessionsError` was dropped in the split — written but
+never read by any component.
 
 ## Routing & boot
 
-Tiny hash router (`app/router.svelte.ts`): `#/login | #/register | #/`.
-`App.svelte`: `initLang(); initTheme();` → `auth.restore()` → gate.
-`Shell.svelte`: protocol check + `loadProviders().then(refreshSessions)`,
-redirect to `#/login` when `auth.user` is null. Settings is **local view
-state** (`view: "main" | "settings"`), not a route — not deep-linkable,
-lost on reload.
+Hash routes (`app/router.svelte.ts`): `#/login | #/register | #/settings[/section] | #/`.
+`App.svelte`: `initLang(); initTheme();` → `auth.restore()` → `syncAuthRoute`
+(the single auth-routing truth; unknown hashes redirect home once).
+Settings is a route with a replace-hash section binding (one history entry per
+visit, Back button works, `#/settings/1` deep-links the AI section).
+`App.svelte` renders `Shell` for home/settings regardless of auth; `Shell`
+re-checks the guard on mount.
 
-## React islands
+## UI components (all Svelte, no second runtime)
 
-Rare UI components are vendored, not installed:
 `matrix-orb.svelte` (hand-ported canvas orb, dependency-free, reduced-motion
-aware) and `bounce-sidebar.tsx` (React + `motion`, mounted via
-`shared/ReactIsland.svelte` → `createRoot`). Cost: `react`, `react-dom`,
-`motion` in the prod bundle for one sidebar widget.
+aware) and `bounce-sidebar.svelte` (nav list with WAAPI arc dot, same
+contract as the Rare UI original it replaced). Positioning state lives in
+`$state` (the template rewrites `style` wholesale, so imperative
+`el.style.transform` writes get wiped — learned the hard way). Prod bundle
+has no React: `react`/`react-dom`/`motion`/`@vitejs/plugin-react` removed,
+`dist/` 464K → 132K.
 
 ## Sidecar contract (renderer view)
 
@@ -78,6 +86,8 @@ aware) and `bounce-sidebar.tsx` (React + `motion`, mounted via
 - Local SQLite (`smartpc.db` in Electron `userData`, `/tmp/*.db` in dev).
   JWT secret derived per launch from the sidecar token → access tokens die
   with the process (sidecar README).
-- Refresh tokens: opaque, hashed, rotated, reuse kills the chain; stored in
-  renderer `localStorage` (`smartpc.refresh`) pending a safeStorage move
-  (noted in `auth.store.svelte.ts:6-8`).
+- Refresh tokens: opaque, hashed, rotated, reuse kills the chain. At rest
+  they live in `<userData>/smartpc-vault.json` with values encrypted by
+  `safeStorage` (OS keychain), via `vault:*` IPC (`main.cjs`, allow-listed in
+  `preload.cjs`). Plain web uses localStorage (documented risk); a vault
+  failure falls back rather than locking out; pre-vault tokens migrate once.

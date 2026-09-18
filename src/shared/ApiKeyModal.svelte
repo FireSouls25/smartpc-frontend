@@ -1,21 +1,21 @@
 <script lang="ts">
-  import { assistant } from "../domains/assistant/assistant.store.svelte";
+  import { providerStore as providers } from "../domains/assistant/providers.store.svelte";
   import { t } from "../lib/i18n.svelte";
 
   let key = $state("");
 
-  const modal = () => assistant.keyModal;
+  const modal = () => providers.keyModal;
 
   function close() {
     key = "";
-    assistant.closeKeyModal();
+    providers.closeKeyModal();
   }
 
   async function save(e: SubmitEvent) {
     e.preventDefault();
     const m = modal();
-    if (!m || assistant.keyBusy) return;
-    await assistant.saveKey(m.provider, key);
+    if (!m || providers.keyBusy) return;
+    await providers.saveKey(m.provider, key);
     key = "";
   }
 
@@ -59,16 +59,16 @@
             bind:value={key}
           />
         </div>
-        {#if assistant.keyError}
-          <p class="error-box">{assistant.keyError}</p>
+        {#if providers.keyError}
+          <p class="error-box">{providers.keyError}</p>
         {/if}
         <div class="flex justify-end gap-2">
           {#if m?.hasKey}
             <button
               type="button"
               class="btn btn-danger mr-auto"
-              disabled={assistant.keyBusy}
-              onclick={() => void assistant.deleteKey(m.provider)}
+              disabled={providers.keyBusy}
+              onclick={() => void providers.deleteKey(m.provider)}
             >
               {t("aikey.remove")}
             </button>
@@ -76,13 +76,13 @@
           <button
             type="button"
             class="btn btn-ghost"
-            disabled={assistant.keyBusy}
+            disabled={providers.keyBusy}
             onclick={close}
           >
             {t("aikey.cancel")}
           </button>
-          <button type="submit" class="btn btn-primary" disabled={assistant.keyBusy}>
-            {assistant.keyBusy ? t("common.loading") : t("aikey.save")}
+          <button type="submit" class="btn btn-primary" disabled={providers.keyBusy}>
+            {providers.keyBusy ? t("common.loading") : t("aikey.save")}
           </button>
         </div>
       </form>

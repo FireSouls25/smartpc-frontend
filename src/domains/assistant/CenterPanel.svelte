@@ -2,7 +2,9 @@
   import MatrixOrb from "../../components/ui/matrix-orb.svelte";
   import SelectMenu from "../../shared/SelectMenu.svelte";
   import ProviderStart from "./ProviderStart.svelte";
-  import { assistant } from "./assistant.store.svelte";
+  import { chatStore as chat } from "./chat.store.svelte";
+  import { providerStore as providers } from "./providers.store.svelte";
+  import { sessionStore as sessions } from "./sessions.store.svelte";
   import { t } from "../../lib/i18n.svelte";
 
   const orbLabels = () => ({
@@ -16,7 +18,7 @@
   // Follow the conversation while the user stays near the bottom;
   // never yank them away when they scrolled up to read history.
   $effect(() => {
-    void assistant.messages.length;
+    void chat.messages.length;
     const el = scrollEl;
     if (!el) return;
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) {
@@ -26,14 +28,16 @@
 
   function submit(e: SubmitEvent) {
     e.preventDefault();
-    void assistant.send(assistant.draft);
+    void chat.send(chat.draft);
   }
+
+  const combo = () => sessions.sessionCombo;
 </script>
 
 <div class="flex h-full min-h-0 flex-1 flex-col gap-4">
   <div class="card-xl flex flex-col items-center" style="padding-top: 1rem; padding-bottom: 1rem;">
     <MatrixOrb
-      state={assistant.orb}
+      state={chat.orb}
       size={180}
       color="#f04e00"
       labels={orbLabels()}
@@ -46,7 +50,7 @@
       class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto"
       aria-live="polite"
     >
-      {#each assistant.messages as m, i (m.id ?? `local-${i}`)}
+      {#each chat.messages as m, i (m.id ?? `local-${i}`)}
         {#if m.role === "user"}
           <div class="msg-in flex justify-end">
             <p class="bubble-user">{m.text}</p>
@@ -90,12 +94,12 @@
       <button
         type="button"
         class="icon-btn shrink-0"
-        style={assistant.listening
+        style={chat.listening
           ? "border-color: var(--danger); color: var(--danger);"
           : ""}
-        onclick={() => assistant.toggleListening()}
+        onclick={() => chat.toggleListening()}
         aria-label={t("orb.listening")}
-        aria-pressed={assistant.listening}
+        aria-pressed={chat.listening}
       >
         <svg
           viewBox="0 0 24 24"
@@ -114,8 +118,8 @@
         class="min-w-0 flex-1 bg-transparent text-sm outline-none"
         style="color: var(--fg);"
         placeholder={t("chat.placeholder")}
-        value={assistant.draft}
-        oninput={(e) => assistant.setDraft(e.currentTarget.value)}
+        value={chat.draft}
+        oninput={(e) => chat.setDraft(e.currentTarget.value)}
       />
       <button class="btn btn-primary shrink-0" type="submit">
         <svg
@@ -132,67 +136,54 @@
         {t("chat.send")}
       </button>
     </form>
-    {#if assistant.voiceError}
-      <p class="error-box">{assistant.voiceError}</p>
+    {#if chat.voiceError}
+      <p class="error-box">{chat.voiceError}</p>
     {/if}
 
     <div class="flex flex-wrap items-center gap-2">
       <SelectMenu
         label={t("chat.provider")}
-        value={assistant.activeProvider}
-        options={assistant.providers.map((p) => ({
+        value={providers.activeProvider}
+        options={providers.providers.map((p) => ({
           value: p.id,
           label: p.id,
           disabled: !p.available,
           hint: p.available ? undefined : t("providers.offline"),
         }))}
-        onChange={(v) => void assistant.selectProvider(v)}
+        onChange={(v) => void providers.selectProvider(v)}
       />
       <SelectMenu
         label={t("chat.model")}
-        value={assistant.activeModel}
-        options={assistant.activeModels().map((m) => ({ value: m, label: m }))}
-        onChange={(v) => void assistant.selectModel(v)}
+        value={providers.activeModel}
+        options={providers.activeModels().map((m) => ({ value: m, label: m }))}
+        onChange={(v) => void providers.selectModel(v)}
       />
-      {#if assistant.sessionCombo && (assistant.sessionCombo.provider !== assistant.activeProvider || (assistant.sessionCombo.model ?? "") !== assistant.activeModel)}
+      {#if combo() && (combo()!.provider !== providers.activeProvider || (combo()!.model ?? "") !== providers.activeModel)}
         <button
           class="chip"
           style="border-color: var(--accent); color: var(--fg);"
-          onclick={() => void assistant.adoptSessionCombo()}
-          title={`${assistant.sessionCombo.provider}${assistant.sessionCombo.model ? ` · ${assistant.sessionCombo.model}` : ""}`}
+          onclick={() => void chat.adoptSessionCombo()}
+          title={`${combo()!.provider}${combo()!.model ? ` · ${combo()!.model}` : ""}`}
         >
           {t("sessions.useModel")}
         </button>
       {/if}
       <button
         class="chip"
-        onclick={() => assistant.toggleGestures()}
-        aria-pressed={assistant.gesturesOn}
-      >
-        <span
-          class="dot"
-          style="background: {assistant.gesturesOn
-            ? 'var(--success)'
-            : 'var(--border-strong)'};"
-        ></span>
-        {t("chat.gestures")}
-      </button>
-      <button
-        class="chip"
-        onclick={() => void assistant.loadProviders()}
+        onclick={() => void providers.loadProviders()}
         aria-label={t("providers.refresh")}
       >
         ↻ {t("providers.refresh")}
       </button>
     </div>
-    {#if assistant.selectError}
-      <p class="error-box">{assistant.selectError}</p>
+    {#if providers.selectError}
+      <p class="error-box">{providers.selectError}</p>
     {/if}
-    {#if !assistant.activeAvailable() && !assistant.providersLoading}
+    {#if !providers.activeAvailable() && !providers.providersLoading}
       <p class="chip" style="border-color: var(--warn); color: var(--warn);">
         {t("providers.needServer")}
       </p>
-      <ProviderStart providerId={assistant.activeProvider} />
+      <ProviderStart providerId={providers.activeProvider} />
     {/if}
   </div>
 </div>

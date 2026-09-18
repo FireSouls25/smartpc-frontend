@@ -1,19 +1,38 @@
 <script lang="ts">
-  import ReactIsland from "../../shared/ReactIsland.svelte";
-  import { BounceSidebar } from "../../components/ui/bounce-sidebar";
+  import BounceSidebar from "../../components/ui/bounce-sidebar.svelte";
   import { auth } from "../auth/auth.store.svelte";
   import { navigate } from "../../app/router.svelte";
   import { t, getLang, setLang, type Lang, type I18nKey } from "../../lib/i18n.svelte";
   import { getTheme, setTheme, type Theme } from "../../lib/theme.svelte";
-  import { assistant } from "../assistant/assistant.store.svelte";
+  import { providerStore as providers } from "../assistant/providers.store.svelte";
   import ProviderStart from "../assistant/ProviderStart.svelte";
   import SelectMenu from "../../shared/SelectMenu.svelte";
   import { api } from "../../lib/api";
 
-  let { onBack }: { onBack: () => void } = $props();
+  let { onBack, initialSection = 0 }: { onBack: () => void; initialSection?: number } =
+    $props();
 
-  const sections = ["general", "gestures", "ai", "account"] as const;
+  // Gestures were cut here on purpose (P2 #13): the toggle switched state
+  // with no detection pipeline behind it. It returns with the pipeline.
+  const sections = ["general", "ai", "account"] as const;
+  const clamp = (n: number): number => Math.min(sections.length - 1, Math.max(0, n));
+  // Local state synced FROM the route (Back button, deep links); writes go
+  // through selectSection which replaces the hash.
   let section = $state(0);
+
+  // Two-way binding with the #/settings[/<n>] hash (replace, not push: one
+  // history entry per settings visit, not per section click).
+  $effect(() => {
+    const fromRoute = clamp(initialSection);
+    if (fromRoute !== section) section = fromRoute;
+  });
+
+  function selectSection(i: number): void {
+    section = clamp(i);
+    navigate(section === 0 ? "settings" : `settings/${section}`, {
+      replace: true,
+    });
+  }
 
   const items = (): string[] =>
     sections.map((s) => t(`settings.${s}` as I18nKey));
@@ -26,7 +45,7 @@
   let diagCopied = $state(false);
 
   $effect(() => {
-    if (section === 2 && !diagLoaded) {
+    if (section === 1 && !diagLoaded) {
       diagLoaded = true;
       void loadDiag();
     }
@@ -87,14 +106,11 @@
 
   <div class="card-xl flex flex-col gap-6 md:flex-row">
     <div class="shrink-0 md:w-52">
-      <ReactIsland
-        component={BounceSidebar}
-        props={{
-          items: items(),
-          value: section,
-          onChange: (i: number) => (section = i),
-          dotColor: "#8839ef",
-        }}
+      <BounceSidebar
+        items={items()}
+        value={section}
+        onChange={selectSection}
+        dotColor="#8839ef"
       />
     </div>
 
@@ -141,58 +157,44 @@
           </div>
         </div>
       {:else if section === 1}
-        <div class="flex items-center justify-between gap-4">
-          <div>
-            <p class="text-sm font-bold">{t("settings.gesturesOn")}</p>
-            <p class="muted mt-0.5 text-xs">{t("settings.gesturesHint")}</p>
-          </div>
-          <button
-            class="switch"
-            role="switch"
-            aria-checked={assistant.gesturesOn}
-            aria-label={t("settings.gesturesOn")}
-            onclick={() => assistant.toggleGestures()}
-          ></button>
-        </div>
-      {:else if section === 2}
         <div class="flex flex-col gap-4">
           <p class="muted text-sm">{t("settings.providerNote")}</p>
-          {#if assistant.providersError}
-            <p class="error-box">{assistant.providersError}</p>
+          {#if providers.providersError}
+            <p class="error-box">{providers.providersError}</p>
           {/if}
           <div>
             <p class="label">{t("chat.provider")}</p>
             <SelectMenu
               label={t("chat.provider")}
-              value={assistant.activeProvider}
-              options={assistant.providers.map((p) => ({
+              value={providers.activeProvider}
+              options={providers.providers.map((p) => ({
                 value: p.id,
                 label: p.id,
                 disabled: !p.available,
                 hint: p.available ? undefined : t("providers.offline"),
               }))}
-              onChange={(v) => void assistant.selectProvider(v)}
+              onChange={(v) => void providers.selectProvider(v)}
             />
           </div>
           <div>
             <p class="label">{t("chat.model")}</p>
             <SelectMenu
               label={t("chat.model")}
-              value={assistant.activeModel}
-              options={assistant.activeModels().map((m) => ({ value: m, label: m }))}
-              onChange={(v) => void assistant.selectModel(v)}
+              value={providers.activeModel}
+              options={providers.activeModels().map((m) => ({ value: m, label: m }))}
+              onChange={(v) => void providers.selectModel(v)}
             />
           </div>
-          {#if assistant.selectError}
-            <p class="error-box">{assistant.selectError}</p>
+          {#if providers.selectError}
+            <p class="error-box">{providers.selectError}</p>
           {/if}
-          <ProviderStart providerId={assistant.activeProvider} />
-          {#each assistant.providers.filter((p) => p.needs_key) as p (p.id)}
+          <ProviderStart providerId={providers.activeProvider} />
+          {#each providers.providers.filter((p) => p.needs_key) as p (p.id)}
             <div class="flex items-center gap-2">
               <span class="chip">
                 <span
                   class="dot"
-                  style="background: {assistant.keyStatus[p.id]
+                  style="background: {providers.keyStatus[p.id]
                     ? 'var(--success)'
                     : 'var(--warn)'};"
                 ></span>
@@ -201,9 +203,9 @@
               <button
                 class="btn btn-ghost"
                 style="padding: 0.375rem 0.75rem; font-size: 0.75rem;"
-                onclick={() => assistant.openKeyModal(p.id)}
+                onclick={() => providers.openKeyModal(p.id)}
               >
-                {assistant.keyStatus[p.id] ? t("aikey.change") : t("aikey.add")}
+                {providers.keyStatus[p.id] ? t("aikey.change") : t("aikey.add")}
               </button>
             </div>
           {/each}

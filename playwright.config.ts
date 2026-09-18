@@ -18,6 +18,8 @@ export default defineConfig({
   use: {
     channel: "chromium-headless-shell",
     viewport: { width: 1600, height: 900 },
+    // Deterministic motion: WAAPI hops snap, the orb renders static.
+    reducedMotion: "reduce",
   },
   // Fresh clone → `npm run test:e2e` just works: the sidecar (temp db per
   // run) and vite (pointed at that sidecar) boot automatically. Locally an

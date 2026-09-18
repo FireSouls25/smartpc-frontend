@@ -5,7 +5,7 @@
 | Spec | What it does | Needs |
 |------|--------------|-------|
 | `tests/smoke.spec.ts` | Boot: `#app` hydrates, zero `pageerror`. No auth. | harness only |
-| `tests/layout.spec.ts` | (1) viewport-lock: page never scrolls, chat pane absorbs 60 injected bubbles. (2) `@slow` real send: picks first Ollama model, sends "Reply with exactly: hola-test", asserts assistant bubble + session row. Timeout 6 min (cold VRAM). | sidecar; a real Ollama model for (2) (else `test.skip`) |
+| `tests/layout.spec.ts` | (1) viewport-lock. (2) **view-only sessions**: seeds a session via API, opens it, asserts no `POST /v1/ai/select` + adopt chip appears. (3) **settings deep-link**: gear → `#/settings`, sidebar hop → `#/settings/1`, unknown hash → home, Back → shell. (4) `@slow` real send. | sidecar; a real Ollama model for (2) (else `test.skip`) |
 | `tests/ai-keys.spec.ts` | Selects `opencode` → key modal appears → bogus key → asserts `/rejected\|rechazado/i` within 60 s. | sidecar, no real key |
 | `tests/helpers.ts` | Shared `APP`/`SIDECAR`/`GATE` (env-driven, no hardcoded ports) + `seedUser()` (fresh user + rotating refresh token per test). | — |
 
@@ -29,8 +29,11 @@ CI starts fresh. Ports/tokens overridable per run:
 APP_PORT=5200 SIDECAR_PORT=18082 npm run test:e2e
 ```
 
-Verified 2026-09-18: `test:e2e` 3/3 in ~16 s, `test:e2e:all` 4/4 in ~27 s
-(incl. real `ollama` inference + session persistence).
+Verified 2026-09-18: `test:e2e` 5/5 in ~18 s, `test:e2e:all` 4/4 earlier
+(~27 s, incl. real Ollama inference + session persistence).
+
+`reducedMotion: "reduce"` is pinned in the Playwright config so WAAPI hops
+and the orb render deterministically (screenshots included).
 
 ## Remaining gaps
 

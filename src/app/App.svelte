@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { route } from "./router.svelte";
+  import { route, navigate, syncAuthRoute } from "./router.svelte";
   import { auth } from "../domains/auth/auth.store.svelte";
   import { initLang, t } from "../lib/i18n.svelte";
   import { initTheme } from "../lib/theme.svelte";
@@ -14,7 +14,13 @@
   let ready = $state(false);
   onMount(async () => {
     await auth.restore();
+    syncAuthRoute(auth.user);
     ready = true;
+  });
+
+  // Unknown hashes fall back to home (parse flags them; redirect once).
+  $effect(() => {
+    if (ready && route.unknown) navigate("");
   });
 </script>
 

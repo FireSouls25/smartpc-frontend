@@ -1,7 +1,11 @@
 import { test, expect } from "@playwright/test";
-import { APP, SIDECAR, GATE, seedUser } from "./helpers";
+import { APP, SIDECAR, GATE, seedUser, accessTokenFor } from "./helpers";
 
-test.beforeEach(async ({ request, context }) => seedUser(request, context));
+let creds: { email: string; password: string };
+
+test.beforeEach(async ({ request, context }) => {
+  creds = await seedUser(request, context);
+});
 
 test("shell locks to viewport; panes scroll internally", async ({ page }) => {
   await page.goto(APP, { waitUntil: "networkidle" });
@@ -46,6 +50,73 @@ test("shell locks to viewport; panes scroll internally", async ({ page }) => {
   expect(after.pageScrollH).toBeLessThanOrEqual(after.innerH + 1);
   expect(after.scrollH).toBeGreaterThan(after.clientH + 200);
   await page.screenshot({ path: "test-results/layout-chat.png" });
+});
+
+test("opening a session never touches the global selection", async ({
+  page,
+  request,
+}) => {
+  // Seed a session directly: browsing history must be view-only (no
+  // POST /v1/ai/select), with an explicit adopt instead.
+  const token = await accessTokenFor(request, creds.email, creds.password);
+  const created = await request.post(`${SIDECAR}/v1/chat/sessions`, {
+    data: { title: "History probe" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Sidecar-Token": GATE,
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  expect(created.ok()).toBeTruthy();
+
+  let selects = 0;
+  page.on("request", (r) => {
+    // Exact POST /select — must not match GET /selection.
+    if (r.method() === "POST" && r.url().endsWith("/v1/ai/select")) selects++;
+  });
+
+  await page.goto(APP, { waitUntil: "networkidle" });
+  await expect(page.getByText("Chats").first()).toBeVisible({ timeout: 20000 });
+  await page.getByText("History probe").click();
+  // Empty session loads: the greeting is replaced by nothing, the adopt
+  // affordance appears (combo recorded), and no selection round-trip
+  // happened (old code POSTed here).
+  await expect(
+    page.getByText(/qué hacemos|what shall/i),
+  ).toHaveCount(0, { timeout: 10000 });
+  await expect(
+    page.getByText(/Usar modelo|Use session/),
+  ).toBeVisible({ timeout: 10000 });
+  await page.waitForTimeout(1000);
+  expect(selects).toBe(0);
+});
+
+test("settings route deep-links sections", async ({ page }) => {
+  await page.goto(APP, { waitUntil: "networkidle" });
+  await expect(page.getByText("Chats").first()).toBeVisible({ timeout: 20000 });
+
+  // Gear → #/settings (general section, sidebar port renders).
+  await page.getByRole("button", { name: /Ajustes|Settings/ }).click();
+  await expect(
+    page.getByRole("heading", { name: /Ajustes|Settings/ }),
+  ).toBeVisible();
+  await expect(page.getByText("General", { exact: true })).toBeVisible();
+
+  // Sidebar hop → #/settings/1 (AI section, dot follows).
+  await page.getByText(/Modelo de IA|AI model/).click();
+  await expect(page.getByText(/Proveedor|Provider/).first()).toBeVisible();
+  expect(page.url()).toContain("#/settings/1");
+  await page.screenshot({ path: "test-results/layout-settings-ai.png" });
+
+  // Unknown hashes fall back home.
+  await page.goto(`${APP}#/nope`, { waitUntil: "networkidle" });
+  await expect(page.getByText("Chats").first()).toBeVisible({ timeout: 20000 });
+
+  // Back button leaves settings for the main shell.
+  await page.getByRole("button", { name: /Ajustes|Settings/ }).click();
+  await page.getByRole("button", { name: /Volver|Back/ }).click();
+  await expect(page.getByText("Chats").first()).toBeVisible();
+  await page.screenshot({ path: "test-results/layout-settings.png" });
 });
 
 test(

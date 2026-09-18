@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { assistant } from "./assistant.store.svelte";
+  import { chatStore as chat } from "./chat.store.svelte";
+  import { sessionStore as sessions } from "./sessions.store.svelte";
   import { t } from "../../lib/i18n.svelte";
 
   function timeOf(iso: string): string {
@@ -19,7 +20,7 @@
     <button
       class="icon-btn"
       style="height: 2rem; width: 2rem;"
-      onclick={() => assistant.newChat()}
+      onclick={() => chat.newChat()}
       aria-label={t("sessions.new")}
       title={t("sessions.new")}
     >
@@ -37,13 +38,13 @@
     </button>
   </div>
 
-  {#if assistant.sessions.length === 0}
+  {#if sessions.list.length === 0}
     <p class="faint px-1 text-xs leading-relaxed">{t("sessions.empty")}</p>
   {/if}
 
   <ul class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
-    {#each assistant.sessions as s (s.id)}
-      {@const active = assistant.activeSessionId === s.id}
+    {#each sessions.list as s (s.id)}
+      {@const active = sessions.activeSessionId === s.id}
       <li
         class="flex items-stretch gap-1 rounded-2xl border transition"
         style={active
@@ -52,7 +53,7 @@
       >
         <button
           class="min-w-0 flex-1 p-3 text-left"
-          onclick={() => void assistant.openSession(s.id)}
+          onclick={() => void chat.openSession(s.id)}
         >
           <p class="truncate text-[13px] font-semibold leading-snug">
             {s.title}
@@ -68,7 +69,7 @@
           class="faint self-start p-2 transition hover:text-[var(--danger)]"
           title={t("sessions.delete")}
           aria-label={t("sessions.delete")}
-          onclick={() => void assistant.deleteSession(s.id)}
+          onclick={() => void chat.deleteSession(s.id)}
         >
           <svg
             viewBox="0 0 24 24"

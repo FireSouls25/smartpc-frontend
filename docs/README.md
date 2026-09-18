@@ -13,3 +13,4 @@ these files describe **what the code actually does**.
 | `05-testing.md` | Test inventory, how to run, gaps |
 | `06-improvements.md` | Proposed improvements, prioritized |
 | `07-provider-availability.md` | Availability watch + auto-start (implemented 2026-09-18) |
+| `08-sync-design.md` | Remote sync design (future; client module removed P2 #14) |

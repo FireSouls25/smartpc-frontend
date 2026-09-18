@@ -38,27 +38,20 @@ Nothing here is started — pick top-down.
 
 ## P2 — Security & architecture
 
-10. **Refresh-token storage** (M2): Electron `safeStorage` via a new preload
-    channel (`vault:set/get/delete`); web keeps `localStorage` only as fallback
-    with a documented risk note. Precondition for any multi-device story.
-11. **Split `assistant.store.svelte.ts`.** 416-line god-store covering chat,
-    providers, keys, sessions, voice, gestures. Natural seams:
-    `chat.store` · `providers.store` (+keys) · `sessions.store` · `voice`.
-    Do after P0 so the split is covered.
-12. **Router upgrade.** One `requireAuth` guard (kills L1 duplication);
-    settings as `#/settings[/section]` route (kills L2); unknown hashes →
-    explicit fallback instead of silent home.
-13. **Decide the gestures story.** The toggle is dead UI: either spike a
-    MediaPipe renderer prototype behind a feature flag or remove the toggle
-    until the pipeline exists. Same for the gestures settings section.
-14. **Decide the Supabase story.** Either wire `pushPreferences/pullPreferences`
-    to theme/lang/provider changes (smallest useful sync) or move `src/supabase/`
-    out of the bundle path so it doesn't ship dead weight + attack surface
-    (`@supabase/supabase-js` in prod deps).
-15. **Bundle diet.** `react` + `react-dom` + `motion` serve one sidebar widget:
-    port `BounceSidebar` to Svelte (animation is a one-axis dot tween) or
-    replace with a Svelte-native list. Drops ~3 prod deps; kills the dual
-    runtime and the M3 class of bugs permanently.
+✅ Done 2026-09-18 — `svelte-check` clean, `test:e2e` 5/5, `dist/` 464K → 132K.
+
+10. ~~**Refresh-token storage** (M2)~~ — `vault:*` IPC + `safeStorage`;
+    web fallback + migration documented in `02-architecture.md`.
+11. ~~**Split `assistant.store.svelte.ts`**~~ — `providers` / `sessions` /
+    `chat` (voice stays in chat, documented); `sessionsError` dropped.
+12. ~~**Router upgrade**~~ — `#/settings[/section]`, `syncAuthRoute`,
+    unknown-hash fallback; covered by the deep-link test.
+13. ~~**Decide the gestures story**~~ — cut (toggle, section, store, i18n);
+    returns with the pipeline. Decision #14.
+14. ~~**Decide the Supabase story**~~ — module + dep removed, design in
+    `08-sync-design.md`. Decision #15.
+15. ~~**Bundle diet**~~ — BounceSidebar ported to Svelte (WAAPI arc,
+    reduced-motion aware); `react`/`react-dom`/`motion` deleted.
 
 ## P3 — Polish & process
 

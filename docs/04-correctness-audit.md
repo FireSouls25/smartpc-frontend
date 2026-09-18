@@ -21,11 +21,11 @@ key-save 90 s, provider-start 45 s, `/health` 10 s. Hung sidecar now surfaces
 a localized `chat.timeout` error instead of wedging `orb` at `thinking`.
 
 ## M2 — Refresh token in `localStorage` (XSS-readable)
-`auth.store.svelte.ts:3-25`. Any injected script exfiltrates the long-lived
-credential. The code comments admit it ("moves to safeStorage", "follows the
-same path") but nothing does. Electron has `safeStorage`; web fallback needs
-a short-lived in-memory token + silent refresh design. No XSS vector is known
-today (no `innerHTML`, deps minimal), so M, not H.
+✅ Fixed 2026-09-18 (P2 #10): `vault:set/get/delete` IPC backed by
+`safeStorage` (OS keychain) + `smartpc-vault.json` (0600); web keeps
+localStorage with a documented risk note; one-time migration; failures fall
+back instead of locking out. No known XSS vector today (no `innerHTML`,
+minimal deps) — defense in depth, done.
 
 ## M3 — `ReactIsland.svelte` mount is fragile
 ✅ Fixed 2026-09-18: `host`/`root` are `$state`, root is created once per host
@@ -47,15 +47,12 @@ send/newChat/adopt). Browsing history no longer POSTs `/v1/ai/select`.
 catalog entry is missing); `deleteKey` flips `keyStatus` locally.
 
 ## L1 — Duplicate scroll-guard logic
-`auth.user` redirect lives in `Shell.svelte:26-31` while `AuthPage` also
-navigates on `auth.user` (`AuthPage.svelte:17-19`). Benign today (both agree),
-but two sources of routing truth; a settings route would need a third.
-Consider one `requireAuth` guard in the router.
+✅ Fixed 2026-09-18 (P2 #12): one `syncAuthRoute(user)` in the router module,
+called from App (post-restore), Shell (mount) and AuthPage (post-login).
 
 ## L2 — Settings view is not a route
-`Shell.svelte:15` local `view` state: not deep-linkable, resets on reload,
-Back button exits to main instead of browser back. Fine for 4 sections;
-revisit when sections grow.
+✅ Fixed 2026-09-18 (P2 #12): `#/settings[/section]`, replace-hash section
+binding, browser Back works, unknown hashes redirect home once.
 
 ## L3 — Stale Electron `backgroundColor`
 `main.cjs:73` hardcodes `#eff1f5` (old Catppuccin mantle); theme is now

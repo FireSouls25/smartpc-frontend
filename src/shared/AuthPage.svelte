@@ -1,7 +1,7 @@
 <script lang="ts">
   import { auth } from "../domains/auth/auth.store.svelte";
   import { t } from "../lib/i18n.svelte";
-  import { navigate } from "../app/router.svelte";
+  import { navigate, syncAuthRoute } from "../app/router.svelte";
   import Logo from "./Logo.svelte";
   import LangTheme from "./LangTheme.svelte";
 
@@ -15,7 +15,7 @@
   const isLogin = () => mode === "login";
 
   $effect(() => {
-    if (auth.user) navigate("");
+    syncAuthRoute(auth.user);
   });
 
   async function submit(e: SubmitEvent) {

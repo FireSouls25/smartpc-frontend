@@ -3,11 +3,34 @@ import { authApi, type User } from "./auth.api";
 const REFRESH_KEY = "smartpc.refresh";
 
 let user = $state<User | null>(null);
-// Access token lives only in memory. When this runs inside Electron it moves
-// to safeStorage (and the refresh token below follows the same path).
+// Access token lives only in memory. The refresh token lives in the
+// OS-keychain vault under Electron, localStorage on plain web (see below).
 let accessToken: string | null = null;
 
-function readRefresh(): string | null {
+type Vault = NonNullable<NonNullable<Window["smartpc"]>["vault"]>;
+
+function vault(): Vault | null {
+  return window.smartpc?.vault ?? null;
+}
+
+// Refresh-token storage, in order of preference:
+// 1. OS-keychain vault (Electron): encrypted at rest via safeStorage.
+// 2. localStorage (plain web): XSS-readable — acceptable for local dev, and
+//    the reason the vault exists. A vault failure also falls back here
+//    rather than locking the user out.
+let vaultUsable: boolean | null = null;
+
+async function vaultReady(): Promise<boolean> {
+  if (vaultUsable !== null) return vaultUsable;
+  try {
+    vaultUsable = (await vault()?.available()) ?? false;
+  } catch {
+    vaultUsable = false;
+  }
+  return vaultUsable;
+}
+
+function readLocal(): string | null {
   try {
     return window.localStorage.getItem(REFRESH_KEY);
   } catch {
@@ -15,7 +38,7 @@ function readRefresh(): string | null {
   }
 }
 
-function writeRefresh(token: string | null): void {
+function writeLocal(token: string | null): void {
   try {
     if (token) window.localStorage.setItem(REFRESH_KEY, token);
     else window.localStorage.removeItem(REFRESH_KEY);
@@ -24,11 +47,51 @@ function writeRefresh(token: string | null): void {
   }
 }
 
+async function readRefresh(): Promise<string | null> {
+  if (await vaultReady()) {
+    try {
+      const { value } = await vault()!.get(REFRESH_KEY);
+      if (value) return value;
+      // One-time migration: a pre-vault localStorage token moves into the
+      // vault, then the plaintext copy is dropped.
+      const legacy = readLocal();
+      if (legacy) {
+        const { ok } = await vault()!.set(REFRESH_KEY, legacy);
+        if (ok) writeLocal(null);
+        return legacy;
+      }
+      return null;
+    } catch {
+      return readLocal();
+    }
+  }
+  return readLocal();
+}
+
+async function writeRefresh(token: string | null): Promise<void> {
+  if (await vaultReady()) {
+    try {
+      if (token) {
+        const { ok } = await vault()!.set(REFRESH_KEY, token);
+        if (ok) writeLocal(null);
+        else writeLocal(token);
+      } else {
+        await vault()!.delete(REFRESH_KEY);
+        writeLocal(null);
+      }
+      return;
+    } catch {
+      /* fall through to local */
+    }
+  }
+  writeLocal(token);
+}
+
 async function login(email: string, password: string): Promise<void> {
   const { user: u, tokens } = await authApi.login(email, password);
   user = u;
   accessToken = tokens.access_token;
-  writeRefresh(tokens.refresh_token);
+  await writeRefresh(tokens.refresh_token);
 }
 
 async function register(email: string, password: string): Promise<void> {
@@ -37,22 +100,22 @@ async function register(email: string, password: string): Promise<void> {
 }
 
 async function restore(): Promise<void> {
-  const rt = readRefresh();
+  const rt = await readRefresh();
   if (!rt) return;
   try {
     const { user: u, tokens } = await authApi.refresh(rt);
     user = u;
     accessToken = tokens.access_token;
-    writeRefresh(tokens.refresh_token);
+    await writeRefresh(tokens.refresh_token);
   } catch {
     user = null;
     accessToken = null;
-    writeRefresh(null);
+    await writeRefresh(null);
   }
 }
 
 async function logout(): Promise<void> {
-  const rt = readRefresh();
+  const rt = await readRefresh();
   try {
     if (rt) await authApi.logout(rt);
   } catch {
@@ -60,7 +123,7 @@ async function logout(): Promise<void> {
   }
   user = null;
   accessToken = null;
-  writeRefresh(null);
+  await writeRefresh(null);
 }
 
 async function deleteAccount(): Promise<void> {
@@ -68,7 +131,7 @@ async function deleteAccount(): Promise<void> {
   await authApi.deleteAccount(accessToken);
   user = null;
   accessToken = null;
-  writeRefresh(null);
+  await writeRefresh(null);
 }
 
 export const auth = {

@@ -17,19 +17,20 @@ export const GATE = process.env.SIDECAR_TOKEN ?? "dev-token-min-16-chars";
 export async function seedUser(
   request: APIRequestContext,
   context: BrowserContext,
-): Promise<void> {
+): Promise<{ email: string; password: string }> {
   const tag = `t${Date.now()}${Math.floor(Math.random() * 1e6)}`;
   const email = `${tag}@test.co`;
+  const password = "correct-horse-1";
   const headers = {
     "Content-Type": "application/json",
     "X-Sidecar-Token": GATE,
   };
   await request.post(`${SIDECAR}/v1/auth/register`, {
-    data: { email, password: "correct-horse-1" },
+    data: { email, password },
     headers,
   });
   const login = await request.post(`${SIDECAR}/v1/auth/login`, {
-    data: { email, password: "correct-horse-1" },
+    data: { email, password },
     headers,
   });
   expect(login.ok()).toBeTruthy();
@@ -37,4 +38,23 @@ export async function seedUser(
   await context.addInitScript((token: string) => {
     window.localStorage.setItem("smartpc.refresh", token);
   }, body.tokens.refresh_token as string);
+  return { email, password };
+}
+
+/** Bearer token for direct sidecar calls as the seeded user. */
+export async function accessTokenFor(
+  request: APIRequestContext,
+  email: string,
+  password: string,
+): Promise<string> {
+  const login = await request.post(`${SIDECAR}/v1/auth/login`, {
+    data: { email, password },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Sidecar-Token": GATE,
+    },
+  });
+  expect(login.ok()).toBeTruthy();
+  const body = await login.json();
+  return body.tokens.access_token as string;
 }

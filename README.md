@@ -2,29 +2,36 @@
 
 Domain architecture: each business domain owns its screens, API calls and
 state. Transversal code (theme, i18n, fetch) lives in `lib/` and `shared/`.
-Rare UI islands are vendored under `components/ui/` (see each file header).
+Rare UI pieces are hand-ported to Svelte under `components/ui/`.
 
 ```
 src/
-  app/            App (boot + restore) · Shell (3-pane layout) · TopBar · router
+  app/            App (boot + restore + route guard) · Shell (3-pane layout) ·
+                  TopBar · router (#/login|register|settings[/section]|home)
   domains/
-    auth/         LoginPage · RegisterPage · auth.api · auth.store (runes)
+    auth/         LoginPage · RegisterPage · auth.api · auth.store
+                  (vault-first refresh tokens, localStorage fallback on web)
     assistant/    CenterPanel (orb + chat) · EventsFeed (actions) ·
-                  SessionsPane (chat history) · assistant.api · assistant.store
-    settings/     SettingsPage (Bounce Sidebar sections, incl. account)
-  components/ui/  matrix-orb.svelte (Svelte port) · bounce-sidebar.tsx (island)
-  native/         Rust sidecar: local backend Electron spawns (see its README)
-  supabase/       remote sync client (accounts + preferences only, unwired)
+                  SessionsPane (chat history) · ProviderStart (server start) ·
+                  assistant.api · chat.store (conversation+voice+lifecycle) ·
+                  providers.store (catalog/selection/keys/3s watch) ·
+                  sessions.store (directory: list + active pointer)
+    settings/     SettingsPage (General · AI · Account)
+  components/ui/  matrix-orb.svelte · bounce-sidebar.svelte (Svelte ports)
   lib/
     theme.css     THE single theme file (mono light/dark, per-pane whites)
     theme.svelte  light/dark/auto manager (data-theme)
     i18n/         es.ts (key contract) · en.ts
     i18n.svelte   reactive t() + persistence
-    api.ts        typed fetch → sidecar (bridge url+token, else VITE_* env)
+    api.ts        typed fetch → sidecar (bridge url+token, else VITE_* env;
+                  30 s default budget, per-endpoint overrides)
   shared/         Logo · LangTheme · AuthPage · SelectMenu (upward dropdown) ·
-                  ReactIsland (rare-ui bridge)
-electron/         main.cjs (spawns sidecar, privileged) · preload.cjs bridge
+                  ApiKeyModal
+electron/         main.cjs (sidecar spawn + token vault, privileged) ·
+                  preload.cjs bridge (sidecar info, ping, vault)
 scripts/          electron-dev.mjs (cargo build + vite + electron)
+tests/            smoke · layout (incl. @slow inference) · ai-keys · helpers
+docs/             current-state docs (see docs/README.md)
 ```
 
 ## Run (needs Rust toolchain for the sidecar)
@@ -44,9 +51,11 @@ cargo run --manifest-path src/native/Cargo.toml -- \
 ```
 
 `npm run build` → static `dist/` (what Electron loads packaged).
-`npm run check` → svelte-check.
+`npm run check` → svelte-check. `npm run test:e2e` → Playwright fast path
+(sidecar + vite boot automatically); `test:e2e:all` adds real inference.
 
 Chat turns persist per user (sessions + history in the sidecar); plain chat
-never creates actions — those come only from command execution. Renderer ↔
-Main speak through `window.smartpc` (preload allow-list); raw Node never
-reaches the UI.
+never creates actions — those come only from command execution. Browsing
+history never reselects the provider — adopt explicitly. Renderer ↔ Main
+speak through `window.smartpc` (preload allow-list); raw Node never
+reaches the UI. Refresh tokens rest in the OS keychain under Electron.
