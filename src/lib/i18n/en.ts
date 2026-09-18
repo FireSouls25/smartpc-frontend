@@ -63,7 +63,8 @@ export const en: Record<I18nKey, string> = {
   "settings.diagReload": "Reload",
   "settings.diagCopy": "Copy",
   "settings.diagCopied": "Copied",
-  "settings.diagEmpty": "No events yet. Try verifying a key or asking something.",
+  "settings.diagEmpty":
+    "No events yet. Try verifying a key or asking something.",
   "context.label": "Context",
   "topbar.settings": "Settings",
   "protocol.mismatch":

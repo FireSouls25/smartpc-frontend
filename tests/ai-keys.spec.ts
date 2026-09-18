@@ -17,7 +17,9 @@ test("opencode without key opens the key modal; bogus key errors", async ({
 
   // Centered modal asking for the key (not a silent select).
   await expect(page.getByRole("dialog")).toBeVisible({ timeout: 10000 });
-  await page.getByPlaceholder(/Pega tu API key|Paste your API key/).fill("badkey12");
+  await page
+    .getByPlaceholder(/Pega tu API key|Paste your API key/)
+    .fill("badkey12");
   await page.getByRole("button", { name: /Guardar|Save/ }).click();
   await expect(page.getByText(/rejected|rechazado/i).first()).toBeVisible({
     timeout: 60000,

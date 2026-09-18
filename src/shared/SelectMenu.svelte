@@ -83,7 +83,6 @@
           type="button"
           role="option"
           aria-selected={o.value === value}
-          aria-checked={o.value === value}
           disabled={o.disabled}
           onclick={() => pick(o.value, o.disabled)}
         >

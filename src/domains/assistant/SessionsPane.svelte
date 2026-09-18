@@ -1,17 +1,8 @@
 <script lang="ts">
   import { chatStore as chat } from "./chat.store.svelte";
   import { sessionStore as sessions } from "./sessions.store.svelte";
+  import { timeOf } from "../../lib/format";
   import { t } from "../../lib/i18n.svelte";
-
-  function timeOf(iso: string): string {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
-    const now = new Date();
-    if (d.toDateString() === now.toDateString()) {
-      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    }
-    return d.toLocaleDateString([], { day: "2-digit", month: "short" });
-  }
 </script>
 
 <aside class="card-xl flex h-full min-h-[240px] min-h-0 flex-col gap-3">

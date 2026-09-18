@@ -3,11 +3,7 @@
 export type RouteName = "home" | "login" | "register" | "settings";
 
 export type RouteTarget =
-  | ""
-  | "login"
-  | "register"
-  | "settings"
-  | `settings/${number}`;
+  "" | "login" | "register" | "settings" | `settings/${number}`;
 
 interface Parsed {
   name: RouteName;
@@ -20,7 +16,8 @@ function parse(): Parsed {
   if (typeof window === "undefined")
     return { name: "home", settingsSection: 0, unknown: false };
   const h = window.location.hash.replace(/^#\/?/, "");
-  if (h === "login") return { name: "login", settingsSection: 0, unknown: false };
+  if (h === "login")
+    return { name: "login", settingsSection: 0, unknown: false };
   if (h === "register")
     return { name: "register", settingsSection: 0, unknown: false };
   if (h === "settings" || h.startsWith("settings/")) {
@@ -41,6 +38,8 @@ let current = $state<Parsed>(parse());
 function resync(): void {
   current = parse();
 }
+
+export { resync };
 
 if (typeof window !== "undefined") {
   window.addEventListener("hashchange", resync);
@@ -76,7 +75,10 @@ export function navigate(to: RouteTarget, opts?: { replace?: boolean }): void {
 export function syncAuthRoute(user: unknown): void {
   if (user && (current.name === "login" || current.name === "register")) {
     navigate("");
-  } else if (!user && (current.name === "home" || current.name === "settings")) {
+  } else if (
+    !user &&
+    (current.name === "home" || current.name === "settings")
+  ) {
     navigate("login");
   }
 }

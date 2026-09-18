@@ -35,4 +35,6 @@ for (const row of rows) {
     }
   }
 }
-console.log(killed ? `done, ${killed} process(es) signaled` : "nothing stray running");
+console.log(
+  killed ? `done, ${killed} process(es) signaled` : "nothing stray running",
+);

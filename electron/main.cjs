@@ -1,7 +1,14 @@
 // Smart PC — Electron main process (Node side, privileged).
 // Spawns the Rust sidecar (local backend) and shows its UI.
 // The renderer NEVER gets raw Node APIs: only window.smartpc from preload.cjs.
-const { app, BrowserWindow, dialog, ipcMain, safeStorage } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  nativeTheme,
+  safeStorage,
+} = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const { spawn } = require("node:child_process");
@@ -14,15 +21,7 @@ function sidecarBin() {
   const name =
     process.platform === "win32" ? "smartpc-native.exe" : "smartpc-native";
   if (isDev) {
-    return path.join(
-      __dirname,
-      "..",
-      "src",
-      "native",
-      "target",
-      "debug",
-      name,
-    );
+    return path.join(__dirname, "..", "src", "native", "target", "debug", name);
   }
   return path.join(process.resourcesPath, "bin", name);
 }
@@ -65,13 +64,17 @@ async function startSidecar() {
 }
 
 function createWindow() {
+  // Cold-start flash color follows the OS theme (the app default is `auto`,
+  // so this matches on fresh installs; an explicit user override may flash
+  // briefly — the renderer owns the theme past this point).
+  const dark = nativeTheme.shouldUseDarkColors;
   const win = new BrowserWindow({
     width: 1280,
     height: 860,
     minWidth: 1024,
     minHeight: 680,
     autoHideMenuBar: true,
-    backgroundColor: "#eff1f5",
+    backgroundColor: dark ? "#131315" : "#e9e9ec",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,

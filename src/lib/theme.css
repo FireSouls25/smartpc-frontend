@@ -12,7 +12,8 @@
   /* Alias for Rare UI islands (Bounce Sidebar); tracks light/dark at runtime. */
   --color-foreground: var(--fg);
 
-  --color-ctp-base: #eff1f5;  --color-ctp-mantle: #e6e9ef;
+  --color-ctp-base: #eff1f5;
+  --color-ctp-mantle: #e6e9ef;
   --color-ctp-crust: #dce0e8;
   --color-ctp-surface0: #ccd0da;
   --color-ctp-surface1: #bcc0cc;
@@ -29,8 +30,9 @@
   --color-ctp-red: #d20f39;
   --color-ctp-pink: #ea76cb;
 
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
-    Roboto, sans-serif;
+  --font-sans:
+    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    sans-serif;
 }
 
 :root,

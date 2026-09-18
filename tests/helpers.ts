@@ -1,4 +1,8 @@
-import { expect, type APIRequestContext, type BrowserContext } from "@playwright/test";
+import {
+  expect,
+  type APIRequestContext,
+  type BrowserContext,
+} from "@playwright/test";
 
 // Same env contract as playwright.config.ts: no hardcoded ports in specs.
 const APP_PORT = Number(process.env.APP_PORT ?? 5199);

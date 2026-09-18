@@ -46,7 +46,8 @@ export const es = {
   "events.running": "En curso",
   "events.done": "Completada",
   "events.failed": "Fallida",
-  "events.empty": "Sin acciones todavía: aquí aparecerán las ejecuciones de la sesión actual.",
+  "events.empty":
+    "Sin acciones todavía: aquí aparecerán las ejecuciones de la sesión actual.",
   "sessions.title": "Chats",
   "sessions.new": "Nuevo chat",
   "sessions.empty": "Sin conversaciones todavía. Empieza una arriba.",
@@ -65,7 +66,8 @@ export const es = {
   "settings.diagReload": "Recargar",
   "settings.diagCopy": "Copiar",
   "settings.diagCopied": "Copiado",
-  "settings.diagEmpty": "Sin eventos todavía. Prueba verificar una clave o pedir algo.",
+  "settings.diagEmpty":
+    "Sin eventos todavía. Prueba verificar una clave o pedir algo.",
   "context.label": "Contexto",
   "topbar.settings": "Ajustes",
   "protocol.mismatch":

@@ -55,23 +55,27 @@ Nothing here is started — pick top-down.
 
 ## P3 — Polish & process
 
-16. **Unit tests for pure logic** (05.2): `api()` mapping, `toEvent`,
-    `timeOf`/`fmtK`, `defaultModelFor`, i18n parity runtime check. Vitest is
-    the natural fit (vite-native, no new runner philosophy).
-17. **Contract test renderer↔sidecar**: snapshot `PROTOCOL` + key response
-    shapes against a live sidecar in CI; fails fast on drift instead of the
-    runtime banner.
-18. **CI workflow**: extend `.github/workflows/e2e.yml` (currently fast
-    Playwright path only) with `npm run check` + `tsc` + unit tests +
-    `cargo test`. No full pipeline exists yet.
-19. **Lint/format baseline**: eslint + prettier + `svelte-check` in one
-    `npm run verify`; add the two `eslint-disable` comments' underlying rules
-    (`no-explicit-any` in `api.ts:50`, `assistant.store:44`) by typing
-    `body: unknown` and a minimal `SpeechRecognition` interface.
-20. **Small UI correctness**: Electron `backgroundColor` per theme (L3);
-    Bounce dot re-snap on `items` change (L4); `aria-checked` vs
-    `aria-selected` double-attrs on `SelectMenu` options (both set —
-    `listbox`/`option` roles want `aria-selected` only).
+✅ Done 2026-09-18 — `npm run verify` (check + lint + format + 25 unit),
+contract 7/7, `cargo test` 48/48, `test:e2e:all` 6/6.
+
+16. ~~**Unit tests for pure logic**~~ — vitest, colocated `src/**/*.test.ts`:
+    `api()` mapping, `toEvent`, `timeOf`/`fmtK`/`contextPct`, `defaultModelFor`,
+    i18n parity, router parse/guard. (`.svelte.ts` stores importable via the
+    svelte plugin; `timeOf`/`fmtK` extracted to `lib/format.ts` to be so.)
+17. ~~**Contract test renderer↔sidecar**~~ — `src/sidecar.contract.test.ts`
+    spawns its own sidecar (temp db, free port) and pins protocol + shapes +
+    envelopes + deterministic errors. Hermetic: `npm run test:contract`.
+18. ~~**CI workflow**~~ — `.github/workflows/ci.yml`: `verify` job (verify +
+    cargo test + contract) and `fast-e2e` job, both with rust-cache.
+19. ~~**Lint/format baseline**~~ — eslint flat (js + ts + svelte + prettier
+    compat) + prettier `--write` baseline enforced by `format:check`; the two
+    `any`s typed (`Options.body: unknown`, `SpeechRecognitionLike`);
+    one `verify` script. Baseline fixes: CJS `require` allowance for
+    `electron/*.cjs`, dropped dead `vite` handle, `void dprTick` tracking read.
+20. ~~**Small UI correctness**~~ — theme-aware Electron `backgroundColor`;
+    dot re-seats on `items` change by construction; `SelectMenu` options keep
+    `aria-selected` only (TopBar's `menuitemradio` + `aria-checked` was
+    already correct).
 21. **Docs reconciliation**: top-level `/docs/` still says "no code yet" and
     prescribes Vercel/Render/Neon + SvelteKit + MediaPipe. Either update it to
     the sidecar reality or mark it superseded by `frontend/docs/` + sidecar

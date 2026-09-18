@@ -7,10 +7,10 @@ The renderer never touches the OS directly.
 
 ## Runtime modes
 
-| Mode | UI | Sidecar url+token from | Command |
-|------|----|------------------------|---------|
-| Electron (real) | desktop window | preload bridge (`window.smartpc.sidecar`, per-launch random token, OS-assigned port) | `npm run dev:electron` (cargo build + vite + electron) |
-| Web dev | browser `:5173` | `VITE_API_URL` / `VITE_SIDECAR_TOKEN` (`.env` → `:18081`) | `npm run dev` + sidecar manually |
+| Mode            | UI              | Sidecar url+token from                                                               | Command                                                |
+| --------------- | --------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------ |
+| Electron (real) | desktop window  | preload bridge (`window.smartpc.sidecar`, per-launch random token, OS-assigned port) | `npm run dev:electron` (cargo build + vite + electron) |
+| Web dev         | browser `:5173` | `VITE_API_URL` / `VITE_SIDECAR_TOKEN` (`.env` → `:18081`)                            | `npm run dev` + sidecar manually                       |
 
 Packaged Electron loads static `dist/` (`npm run build`); main resolves the
 sidecar from `resources/bin` instead of `src/native/target/debug`.
@@ -35,11 +35,15 @@ src/
   shared/                 Logo · LangTheme · AuthPage · SelectMenu (upward dropdown) ·
                           ApiKeyModal
   lib/                    api.ts (typed fetch, 30 s default budget) · theme.css
-                          theme.svelte · i18n/ (es contract, en) · i18n.svelte · cn.ts
+                          theme.svelte · i18n/ (es contract, en) · i18n.svelte ·
+                          cn.ts · format.ts (pure, unit-tested)
 electron/                 main.cjs (sidecar spawn + token vault) · preload.cjs
 scripts/                  electron-dev.mjs (cargo build + vite + electron)
 tests/                    smoke · layout (incl. @slow inference) · ai-keys ·
                           helpers (ports + user seeding)
+                          (+ colocated src/**/*.test.ts unit, *.contract.test.ts)
+eslint.config.js          js + ts + svelte + prettier-compat (npm run lint)
+vitest.config.ts          unit + contract projects (test:unit / test:contract)
 ```
 
 ## State snapshot (verified 2026-09-18, P2 landed)

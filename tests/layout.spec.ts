@@ -81,12 +81,12 @@ test("opening a session never touches the global selection", async ({
   // Empty session loads: the greeting is replaced by nothing, the adopt
   // affordance appears (combo recorded), and no selection round-trip
   // happened (old code POSTed here).
-  await expect(
-    page.getByText(/qué hacemos|what shall/i),
-  ).toHaveCount(0, { timeout: 10000 });
-  await expect(
-    page.getByText(/Usar modelo|Use session/),
-  ).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText(/qué hacemos|what shall/i)).toHaveCount(0, {
+    timeout: 10000,
+  });
+  await expect(page.getByText(/Usar modelo|Use session/)).toBeVisible({
+    timeout: 10000,
+  });
   await page.waitForTimeout(1000);
   expect(selects).toBe(0);
 });
@@ -126,7 +126,9 @@ test(
     // Cold VRAM loads of multi-GB models are slow: allow generously.
     test.setTimeout(360000);
     await page.goto(APP, { waitUntil: "networkidle" });
-    await expect(page.getByText("Chats").first()).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText("Chats").first()).toBeVisible({
+      timeout: 20000,
+    });
 
     // Use a model that truly exists here (the default may not be installed).
     const detected = await page.evaluate(

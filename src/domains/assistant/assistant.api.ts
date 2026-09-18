@@ -75,8 +75,7 @@ export interface RunResponse {
 }
 
 export const aiApi = {
-  providers: () =>
-    api<{ providers: ProviderInfo[] }>("/v1/ai/providers"),
+  providers: () => api<{ providers: ProviderInfo[] }>("/v1/ai/providers"),
 
   /** Launch a startable local server and wait until it answers. */
   startProvider: (id: string) =>

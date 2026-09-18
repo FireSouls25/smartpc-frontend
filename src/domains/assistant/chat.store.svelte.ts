@@ -36,10 +36,33 @@ let events = $state<AppEvent[]>([]);
 let contextUsed = $state(0);
 let draft = $state("");
 let voiceError = $state("");
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let recognition: any = null;
 
-function toEvent(a: {
+// Minimal Web Speech API surface (no DOM lib dependency on the event
+// shapes; replaces the previous `any` + eslint-disable).
+interface SpeechRecognitionResultLike {
+  readonly isFinal: boolean;
+  readonly 0: { readonly transcript: string };
+}
+
+interface SpeechRecognitionEventLike {
+  readonly resultIndex: number;
+  readonly results: ArrayLike<SpeechRecognitionResultLike>;
+}
+
+interface SpeechRecognitionLike {
+  lang: string;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+}
+
+let recognition: SpeechRecognitionLike | null = null;
+
+export function toEvent(a: {
   id: string;
   title: string;
   status: string;
@@ -152,10 +175,10 @@ async function send(text: string): Promise<void> {
   }
 }
 
-function speechCtor(): (new () => unknown) | null {
+function speechCtor(): (new () => SpeechRecognitionLike) | null {
   const w = window as unknown as Record<string, unknown>;
   const ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
-  return ctor as (new () => unknown) | null;
+  return ctor as (new () => SpeechRecognitionLike) | null;
 }
 
 /**
@@ -166,8 +189,7 @@ function toggleListening(): void {
   if (orb === "thinking") return;
   if (orb === "listening") {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (recognition as any)?.stop();
+      recognition?.stop();
     } catch {
       /* already stopped */
     }
@@ -180,8 +202,7 @@ function toggleListening(): void {
     return;
   }
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition = new (Ctor as any)();
+    recognition = new Ctor();
   } catch {
     voiceError = t("voice.error");
     return;
@@ -189,10 +210,7 @@ function toggleListening(): void {
   recognition.lang = getLang() === "es" ? "es-ES" : "en-US";
   recognition.interimResults = true;
   recognition.maxAlternatives = 1;
-  recognition.onresult = (e: {
-    resultIndex: number;
-    results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }>;
-  }) => {
+  recognition.onresult = (e) => {
     let interim = "";
     let fin = "";
     for (let i = e.resultIndex; i < e.results.length; i++) {

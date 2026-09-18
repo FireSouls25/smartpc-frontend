@@ -13,9 +13,7 @@ function sidecar(): SidecarInfo | null {
 
 function base(): string {
   return (
-    sidecar()?.url ??
-    import.meta.env.VITE_API_URL ??
-    "http://127.0.0.1:18080"
+    sidecar()?.url ?? import.meta.env.VITE_API_URL ?? "http://127.0.0.1:18080"
   );
 }
 
@@ -52,8 +50,7 @@ export class ApiError extends Error {
 
 interface Options {
   method?: "GET" | "POST" | "DELETE";
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  body?: any;
+  body?: unknown;
   token?: string;
   /**
    * Abort budget. `undefined` → default 30 s; `null` → no timeout

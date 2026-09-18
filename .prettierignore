@@ -1,0 +1,6 @@
+dist/
+test-results/
+src/native/target/
+lancedb/
+.env
+package-lock.json

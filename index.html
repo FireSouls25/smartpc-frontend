@@ -13,8 +13,7 @@
         var t = localStorage.getItem("smartpc.theme") || "auto";
         if (
           t === "dark" ||
-          (t === "auto" &&
-            matchMedia("(prefers-color-scheme: dark)").matches)
+          (t === "auto" && matchMedia("(prefers-color-scheme: dark)").matches)
         )
           document.documentElement.dataset.theme = "dark";
       } catch (e) {}

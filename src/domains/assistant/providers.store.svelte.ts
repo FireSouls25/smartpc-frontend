@@ -21,7 +21,7 @@ let activeProvider = $state("ollama");
 let activeModel = $state("");
 let contextWindow = $state<number | null>(null);
 
-function defaultModelFor(list: ProviderInfo[], id: string): string {
+export function defaultModelFor(list: ProviderInfo[], id: string): string {
   const p = list.find((x) => x.id === id);
   return p?.default_model || p?.models[0] || "";
 }
@@ -97,7 +97,10 @@ function stopProviderWatch(): void {
   }
 }
 
-async function selectProvider(id: string, model?: string | null): Promise<void> {
+async function selectProvider(
+  id: string,
+  model?: string | null,
+): Promise<void> {
   selectError = "";
   const p = providers.find((x) => x.id === id);
   if (!p || !p.available) {
@@ -189,7 +192,8 @@ async function deleteKey(provider: string): Promise<void> {
 
 function startErrorFor(code: string | undefined): I18nKey {
   if (code === "not_installed") return "providers.notInstalled";
-  if (code === "start_timeout" || code === "timeout") return "providers.startTimeout";
+  if (code === "start_timeout" || code === "timeout")
+    return "providers.startTimeout";
   return "providers.startFailed";
 }
 

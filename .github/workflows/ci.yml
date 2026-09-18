@@ -1,0 +1,34 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Types + lint + format + unit; then sidecar suite + contract
+      # (the contract spec spawns its own sidecar, no browsers needed).
+      - run: npm run verify
+      - run: cargo test --manifest-path src/native/Cargo.toml
+      - run: npm run test:contract
+
+  fast-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # Fast path only: @slow (real model inference) stays local.
+      - run: npm run test:e2e

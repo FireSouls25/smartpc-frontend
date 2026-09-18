@@ -78,7 +78,8 @@ function shutdown(code = 0) {
   process.exit(code);
 }
 
-const vite = spawnTracked(
+// Fire-and-forget: spawnTracked owns the handle (see children set above).
+spawnTracked(
   "node_modules/.bin/vite",
   ["--port", String(PORT), "--host", HOST, "--strictPort"],
   { stdio: "inherit", shell },

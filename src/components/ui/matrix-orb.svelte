@@ -100,7 +100,7 @@
 
   // (Re)build the loop when geometry-affecting props or DPR change.
   $effect(() => {
-    dprTick;
+    void dprTick;
     const el = canvas;
     const ctx = el?.getContext("2d");
     if (!el || !ctx) return;

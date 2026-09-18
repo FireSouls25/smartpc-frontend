@@ -1,6 +1,7 @@
 <script lang="ts">
   import { chatStore as chat } from "./chat.store.svelte";
   import { providerStore as providers } from "./providers.store.svelte";
+  import { contextPct, fmtK } from "../../lib/format";
   import { t } from "../../lib/i18n.svelte";
 
   function color(status: string): string {
@@ -23,14 +24,8 @@
     return "✓ " + t("events.done");
   }
 
-  function fmtK(n: number): string {
-    return n >= 1000 ? `${(n / 1000).toFixed(1)}K` : `${n}`;
-  }
-
   function ctxPct(): number {
-    const w = providers.contextWindow;
-    if (w == null || w <= 0) return 0;
-    return Math.min(100, (chat.contextUsed / w) * 100);
+    return contextPct(chat.contextUsed, providers.contextWindow);
   }
 
   function ctxColor(): string {

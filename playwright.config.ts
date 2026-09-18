@@ -7,8 +7,7 @@ import path from "node:path";
 // tests/helpers.ts reads the same vars so specs never hardcode ports.
 const APP_PORT = Number(process.env.APP_PORT ?? 5199);
 const SIDECAR_PORT = Number(process.env.SIDECAR_PORT ?? 18081);
-const SIDECAR_TOKEN =
-  process.env.SIDECAR_TOKEN ?? "dev-token-min-16-chars";
+const SIDECAR_TOKEN = process.env.SIDECAR_TOKEN ?? "dev-token-min-16-chars";
 const APP_URL = `http://127.0.0.1:${APP_PORT}`;
 const SIDECAR_URL = `http://127.0.0.1:${SIDECAR_PORT}`;
 

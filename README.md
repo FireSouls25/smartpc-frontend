@@ -51,8 +51,10 @@ cargo run --manifest-path src/native/Cargo.toml -- \
 ```
 
 `npm run build` → static `dist/` (what Electron loads packaged).
-`npm run check` → svelte-check. `npm run test:e2e` → Playwright fast path
-(sidecar + vite boot automatically); `test:e2e:all` adds real inference.
+`npm run check` → svelte-check. `npm run verify` → check + lint +
+format:check + unit tests. `npm run test:e2e` → Playwright fast path
+(sidecar + vite boot automatically); `test:e2e:all` adds real inference;
+`test:contract` → renderer↔sidecar shape pinning (spawns its own sidecar).
 
 Chat turns persist per user (sessions + history in the sidecar); plain chat
 never creates actions — those come only from command execution. Browsing
