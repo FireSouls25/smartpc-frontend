@@ -1,8 +1,14 @@
 import { aiApi, type ProviderInfo, type SessionSummary } from "./assistant.api";
+import { ApiError } from "../../lib/api";
 import { getLang, t, type I18nKey } from "../../lib/i18n.svelte";
 export type OrbState = "idle" | "listening" | "thinking";
 
+/** Provider availability re-check interval (see docs/07-provider-availability.md). */
+export const PROVIDER_POLL_MS = 3000;
+
 export interface ChatMsg {
+  /** Server message id when persisted; undefined for the local greeting. */
+  id?: string;
   role: "user" | "assistant";
   text?: string;
   textKey?: I18nKey;
@@ -26,6 +32,11 @@ let events = $state<AppEvent[]>([]);
 let sessions = $state<SessionSummary[]>([]);
 let sessionsError = $state("");
 let activeSessionId = $state<string | null>(null);
+// Combo the viewed session was created with. Browsing history never mutates
+// the global selection (that surprised); the UI offers an explicit adopt.
+let sessionCombo = $state<{ provider: string; model: string | null } | null>(
+  null,
+);
 let providers = $state<ProviderInfo[]>([]);
 let providersLoading = $state(false);
 let providersError = $state("");
@@ -34,6 +45,8 @@ let keyStatus = $state<Record<string, boolean>>({});
 let keyModal = $state<{ provider: string; hasKey: boolean } | null>(null);
 let keyBusy = $state(false);
 let keyError = $state("");
+let startingProvider = $state<string | null>(null);
+let startError = $state("");
 let activeProvider = $state("ollama");
 let activeModel = $state("");
 let contextUsed = $state(0);
@@ -69,25 +82,87 @@ function toEvent(a: {
   };
 }
 
-async function loadProviders(): Promise<void> {
-  providersLoading = true;
-  providersError = "";
+async function loadProviders(opts?: { silent?: boolean }): Promise<void> {
+  const silent = opts?.silent ?? false;
+  if (!silent) {
+    providersLoading = true;
+    providersError = "";
+  }
   try {
     const res = await aiApi.providers();
     providers = res.providers;
     await refreshKeyStatus();
-    try {
-      const sel = await aiApi.selection();
-      activeProvider = sel.provider;
-      activeModel = sel.model || defaultModelFor(providers, activeProvider);
-    } catch {
-      /* first run: no selection stored yet */
+    if (!silent) {
+      try {
+        const sel = await aiApi.selection();
+        activeProvider = sel.provider;
+        activeModel = sel.model || defaultModelFor(providers, activeProvider);
+      } catch {
+        /* first run: no selection stored yet */
+      }
     }
     syncContextWindow();
   } catch (err) {
-    providersError = err instanceof Error ? err.message : "Error";
+    if (!silent) providersError = err instanceof Error ? err.message : "Error";
   } finally {
-    providersLoading = false;
+    if (!silent) providersLoading = false;
+  }
+}
+
+// Availability watch: re-probes providers every PROVIDER_POLL_MS so a server
+// started after boot (e.g. `ollama serve` in another terminal) flips the UI
+// from "not detected" to usable without a manual refresh. Silent on purpose:
+// no loading flicker, no error surfaces, no selection clobbering (the server
+// selection is only read on the initial load; user changes go through
+// selectProvider which persists + updates local state itself).
+let pollTimer: number | null = null;
+let pollInFlight = false;
+
+async function pollProviders(): Promise<void> {
+  if (pollInFlight) return;
+  if (typeof document !== "undefined" && document.hidden) return;
+  pollInFlight = true;
+  try {
+    await loadProviders({ silent: true });
+  } catch {
+    /* silent: the next tick retries */
+  } finally {
+    pollInFlight = false;
+  }
+}
+
+function startProviderWatch(): void {
+  if (pollTimer !== null || typeof window === "undefined") return;
+  void pollProviders();
+  pollTimer = window.setInterval(() => void pollProviders(), PROVIDER_POLL_MS);
+}
+
+function stopProviderWatch(): void {
+  if (pollTimer !== null) {
+    window.clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function startErrorFor(code: string | undefined): I18nKey {
+  if (code === "not_installed") return "providers.notInstalled";
+  if (code === "start_timeout" || code === "timeout") return "providers.startTimeout";
+  return "providers.startFailed";
+}
+
+/** Ask the sidecar to launch a startable server; the watch picks it up. */
+async function startProvider(id: string): Promise<void> {
+  if (startingProvider) return;
+  startingProvider = id;
+  startError = "";
+  try {
+    await aiApi.startProvider(id);
+    await loadProviders({ silent: true });
+  } catch (err) {
+    const code = err instanceof ApiError ? err.code : undefined;
+    startError = t(startErrorFor(code));
+  } finally {
+    startingProvider = null;
   }
 }
 
@@ -142,11 +217,24 @@ async function saveKey(provider: string, key: string): Promise<void> {
   keyError = "";
   try {
     const res = await aiApi.saveKey(provider, key);
-    await refreshKeyStatus();
-    // Fresh live catalog now that the key exists, then pre-select a model
-    // that actually answers — the dropdown keeps offering every model.
-    await loadProviders();
+    // The verify response already carries the fresh catalog for this
+    // provider — fold it into local state instead of refetching the whole
+    // list (was: keyStatus + full load incl. selection + keyStatus again).
+    keyStatus = { ...keyStatus, [provider]: true };
+    if (res.models.length > 0) {
+      providers = providers.map((p) =>
+        p.id === provider
+          ? { ...p, available: true, models: [...res.models] }
+          : p,
+      );
+      syncContextWindow();
+    }
     closeKeyModal();
+    // Persist the pre-selection for a model that actually answers — the
+    // dropdown keeps offering every catalog model.
+    if (!providers.some((p) => p.id === provider)) {
+      await loadProviders({ silent: true });
+    }
     await selectProvider(provider, res.suggested_model ?? undefined);
   } catch (err) {
     keyError = err instanceof Error ? err.message : "Error";
@@ -160,7 +248,7 @@ async function deleteKey(provider: string): Promise<void> {
   keyError = "";
   try {
     await aiApi.deleteKey(provider);
-    await refreshKeyStatus();
+    keyStatus = { ...keyStatus, [provider]: false };
     closeKeyModal();
   } catch (err) {
     keyError = err instanceof Error ? err.message : "Error";
@@ -188,6 +276,7 @@ async function refreshSessions(): Promise<void> {
 
 function newChat(): void {
   activeSessionId = null;
+  sessionCombo = null;
   messages = greeting();
   events = [];
 }
@@ -195,16 +284,26 @@ function newChat(): void {
 async function openSession(id: string): Promise<void> {
   const d = await aiApi.sessionDetail(id);
   activeSessionId = id;
+  sessionCombo = { provider: d.session.provider, model: d.session.model };
   // Machine turns (role "tool") stay server-side; the chat shows people only.
   messages = d.messages
     .filter((m) => m.role !== "tool")
     .map((m) => ({
+      id: m.id,
       role: m.role === "assistant" ? "assistant" : "user",
       text: m.content,
     }));
   events = d.actions.map(toEvent);
-  // Adopt the session's combo so follow-ups keep its context.
-  await selectProvider(d.session.provider, d.session.model);
+  // View-only: the global selection is untouched. Follow-ups run under the
+  // active combo until the user explicitly adopts this session's (see
+  // adoptSessionCombo, surfaced in CenterPanel).
+}
+
+/** Adopt the viewed session's combo as the global selection. */
+async function adoptSessionCombo(): Promise<void> {
+  if (!sessionCombo) return;
+  await selectProvider(sessionCombo.provider, sessionCombo.model ?? undefined);
+  sessionCombo = null;
 }
 
 async function deleteSession(id: string): Promise<void> {
@@ -245,14 +344,23 @@ async function send(text: string): Promise<void> {
     messages = d.messages
       .filter((m) => m.role !== "tool")
       .map((m, i, arr) => ({
+        id: m.id,
         role: m.role === "assistant" ? "assistant" : "user",
         text: m.content,
         ...(i === arr.length - 1 && steps.length > 0 ? { steps } : {}),
       }));
     events = d.actions.map(toEvent);
     await refreshSessions();
+    // The turn above ran under the active combo, so the viewed session now
+    // continues under it too — the adopt affordance has served its purpose.
+    sessionCombo = null;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Error";
+    const msg =
+      err instanceof ApiError && err.code === "timeout"
+        ? t("chat.timeout")
+        : err instanceof Error
+          ? err.message
+          : "Error";
     messages = [...messages, { role: "assistant", text: `Error: ${msg}` }];
   } finally {
     orb = "idle";
@@ -345,6 +453,9 @@ export const assistant = {
   get activeSessionId(): string | null {
     return activeSessionId;
   },
+  get sessionCombo(): { provider: string; model: string | null } | null {
+    return sessionCombo;
+  },
   get providers(): ProviderInfo[] {
     return providers;
   },
@@ -368,6 +479,12 @@ export const assistant = {
   },
   get keyError(): string {
     return keyError;
+  },
+  get startingProvider(): string | null {
+    return startingProvider;
+  },
+  get startError(): string {
+    return startError;
   },
   get activeProvider(): string {
     return activeProvider;
@@ -397,6 +514,9 @@ export const assistant = {
   },
   setDraft,
   loadProviders,
+  startProviderWatch,
+  stopProviderWatch,
+  startProvider,
   refreshSessions,
   selectProvider,
   selectModel,
@@ -407,6 +527,7 @@ export const assistant = {
   deleteKey,
   newChat,
   openSession,
+  adoptSessionCombo,
   deleteSession,
   toggleGestures(): void {
     gesturesOn = !gesturesOn;

@@ -27,7 +27,9 @@ src/native/
   `{session_id?, provider?, model?, message}` → `{reply, model, provider,
   session_id}`. Turns persist in the session (last 20 feed the model).
   Plain chat never creates actions.
-- `GET /v1/ai/providers` (live detection) · `POST /v1/ai/select` (validates
+- `GET /v1/ai/providers` (live detection; each entry carries `startable`
+  + `installed`) · `POST /v1/ai/providers/{id}/start` (launches `ollama
+  serve` when down, waits until it answers) · `POST /v1/ai/select` (validates
   + persists) · `GET /v1/ai/selection`.
 - Sessions: `GET|POST /v1/chat/sessions`, `GET|DELETE /v1/chat/sessions/{id}`
   (detail includes messages + actions).

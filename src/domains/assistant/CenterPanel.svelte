@@ -1,6 +1,7 @@
 <script lang="ts">
   import MatrixOrb from "../../components/ui/matrix-orb.svelte";
   import SelectMenu from "../../shared/SelectMenu.svelte";
+  import ProviderStart from "./ProviderStart.svelte";
   import { assistant } from "./assistant.store.svelte";
   import { t } from "../../lib/i18n.svelte";
 
@@ -45,7 +46,7 @@
       class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto"
       aria-live="polite"
     >
-      {#each assistant.messages as m, i (i)}
+      {#each assistant.messages as m, i (m.id ?? `local-${i}`)}
         {#if m.role === "user"}
           <div class="msg-in flex justify-end">
             <p class="bubble-user">{m.text}</p>
@@ -58,7 +59,7 @@
               </p>
               {#if m.steps?.length}
                 <div class="flex flex-wrap gap-1 pl-1">
-                  {#each m.steps as st (st.tool)}
+                  {#each m.steps as st, j (j)}
                     <span
                       class="chip"
                       style="font-size: 10px; padding: 2px 8px;"
@@ -153,6 +154,16 @@
         options={assistant.activeModels().map((m) => ({ value: m, label: m }))}
         onChange={(v) => void assistant.selectModel(v)}
       />
+      {#if assistant.sessionCombo && (assistant.sessionCombo.provider !== assistant.activeProvider || (assistant.sessionCombo.model ?? "") !== assistant.activeModel)}
+        <button
+          class="chip"
+          style="border-color: var(--accent); color: var(--fg);"
+          onclick={() => void assistant.adoptSessionCombo()}
+          title={`${assistant.sessionCombo.provider}${assistant.sessionCombo.model ? ` · ${assistant.sessionCombo.model}` : ""}`}
+        >
+          {t("sessions.useModel")}
+        </button>
+      {/if}
       <button
         class="chip"
         onclick={() => assistant.toggleGestures()}
@@ -181,6 +192,7 @@
       <p class="chip" style="border-color: var(--warn); color: var(--warn);">
         {t("providers.needServer")}
       </p>
+      <ProviderStart providerId={assistant.activeProvider} />
     {/if}
   </div>
 </div>

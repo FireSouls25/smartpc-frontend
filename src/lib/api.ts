@@ -26,11 +26,17 @@ function sidecarToken(): string {
 /** Must match the sidecar PROTOCOL const; the shell warns on mismatch. */
 export const SIDECAR_PROTOCOL = 2;
 
+/** Default budget for sidecar calls. Chat/run/keys override per endpoint;
+ * inference under cold VRAM is the only thing allowed past this. */
+const DEFAULT_TIMEOUT_MS = 30000;
+
 export async function fetchHealth(): Promise<{
   status: string;
   protocol: number;
 }> {
-  const res = await fetch(base() + "/health");
+  const res = await fetch(base() + "/health", {
+    signal: AbortSignal.timeout(10000),
+  });
   return (await res.json()) as { status: string; protocol: number };
 }
 
@@ -49,19 +55,37 @@ interface Options {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   body?: any;
   token?: string;
+  /**
+   * Abort budget. `undefined` → default 30 s; `null` → no timeout
+   * (nothing uses this today — even inference is bounded, just longer);
+   * a number overrides with that many ms.
+   */
+  timeoutMs?: number | null;
 }
 
 export async function api<T>(path: string, opts: Options = {}): Promise<T> {
   const gate = sidecarToken();
-  const res = await fetch(base() + path, {
-    method: opts.method ?? "GET",
-    headers: {
-      "Content-Type": "application/json",
-      ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
-      ...(gate ? { "X-Sidecar-Token": gate } : {}),
-    },
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  });
+  let res: Response;
+  try {
+    res = await fetch(base() + path, {
+      method: opts.method ?? "GET",
+      headers: {
+        "Content-Type": "application/json",
+        ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
+        ...(gate ? { "X-Sidecar-Token": gate } : {}),
+      },
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      signal:
+        opts.timeoutMs === null
+          ? undefined
+          : AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "TimeoutError") {
+      throw new ApiError(504, "Request timed out", "timeout");
+    }
+    throw err;
+  }
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => null);
   if (!res.ok) {

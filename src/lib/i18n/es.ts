@@ -28,11 +28,19 @@ export const es = {
   "chat.model": "Modelo",
   "chat.gestures": "Gestos",
   "chat.hello": "Hola, ¿qué hacemos hoy?",
+  "chat.timeout": "La respuesta tardó demasiado; inténtalo de nuevo.",
   "voice.unsupported":
     "Voz no disponible en este navegador; escribe en su lugar.",
   "voice.error": "No pude escucharte, prueba de nuevo.",
   "providers.offline": "no detectado",
   "providers.refresh": "Actualizar",
+  "providers.start": "Iniciar",
+  "providers.starting": "Iniciando…",
+  "providers.startFailed": "No se pudo iniciar el servidor.",
+  "providers.startTimeout":
+    "Se inició pero aún no responde; aparecerá en unos segundos.",
+  "providers.notInstalled":
+    "No instalado o fuera del PATH — instala Ollama primero.",
   "providers.needServer":
     "Inicia Ollama o llama-server para chatear de verdad.",
   "events.title": "Actividad",
@@ -44,6 +52,7 @@ export const es = {
   "sessions.new": "Nuevo chat",
   "sessions.empty": "Sin conversaciones todavía. Empieza una arriba.",
   "sessions.delete": "Eliminar conversación",
+  "sessions.useModel": "Usar modelo de la sesión",
   "settings.title": "Ajustes",
   "settings.back": "Volver",
   "settings.general": "General",

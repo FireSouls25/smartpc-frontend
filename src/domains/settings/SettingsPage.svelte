@@ -6,6 +6,7 @@
   import { t, getLang, setLang, type Lang, type I18nKey } from "../../lib/i18n.svelte";
   import { getTheme, setTheme, type Theme } from "../../lib/theme.svelte";
   import { assistant } from "../assistant/assistant.store.svelte";
+  import ProviderStart from "../assistant/ProviderStart.svelte";
   import SelectMenu from "../../shared/SelectMenu.svelte";
   import { api } from "../../lib/api";
 
@@ -185,6 +186,7 @@
           {#if assistant.selectError}
             <p class="error-box">{assistant.selectError}</p>
           {/if}
+          <ProviderStart providerId={assistant.activeProvider} />
           {#each assistant.providers.filter((p) => p.needs_key) as p (p.id)}
             <div class="flex items-center gap-2">
               <span class="chip">

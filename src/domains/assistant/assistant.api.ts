@@ -9,6 +9,10 @@ export interface ProviderInfo {
   default_model: string;
   needs_key: boolean;
   context_window: number | null;
+  /** The sidecar knows how to launch this server (today: ollama only). */
+  startable: boolean;
+  /** Binary resolves on PATH. True when answering; null when N/A. */
+  installed: boolean | null;
 }
 
 export interface KeyStatus {
@@ -74,6 +78,13 @@ export const aiApi = {
   providers: () =>
     api<{ providers: ProviderInfo[] }>("/v1/ai/providers"),
 
+  /** Launch a startable local server and wait until it answers. */
+  startProvider: (id: string) =>
+    api<{ ok: boolean; already_running: boolean }>(
+      `/v1/ai/providers/${encodeURIComponent(id)}/start`,
+      { method: "POST", timeoutMs: 45000 },
+    ),
+
   selection: () =>
     api<{ provider: string; model: string | null }>(
       "/v1/ai/selection",
@@ -104,6 +115,8 @@ export const aiApi = {
           message,
         },
         ...withAuth(auth.token ?? undefined),
+        // Single-turn inference under cold VRAM can take minutes.
+        timeoutMs: 300000,
       },
     ),
 
@@ -123,6 +136,8 @@ export const aiApi = {
         lang: opts?.lang,
       },
       ...withAuth(auth.token ?? undefined),
+      // Multi-step agent loop: the longest call in the app.
+      timeoutMs: 600000,
     }),
 
   sessions: () =>
@@ -161,6 +176,8 @@ export const aiApi = {
       method: "POST",
       body: { provider, key },
       ...withAuth(auth.token ?? undefined),
+      // Live verification spaces its attempts (bot protection).
+      timeoutMs: 90000,
     }),
 
   deleteKey: (provider: string) =>

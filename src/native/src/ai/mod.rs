@@ -10,3 +10,4 @@ pub mod openai_compat;
 pub mod opencode;
 pub mod provider;
 pub mod routes;
+pub mod supervise;

@@ -11,6 +11,8 @@
     "electron": "electron .",
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test:e2e": "playwright test --grep-invert @slow",
+    "test:e2e:all": "playwright test",
     "preview": "vite preview"
   },
   "dependencies": {

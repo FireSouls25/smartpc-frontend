@@ -141,6 +141,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/auth/refresh", post(auth::routes::refresh))
         .route("/v1/auth/logout", post(auth::routes::logout))
         .route("/v1/ai/providers", get(crate::ai::routes::providers))
+        .route(
+            "/v1/ai/providers/{id}/start",
+            post(crate::ai::routes::start_provider),
+        )
         .route("/v1/support/diagnostics", get(crate::diagnostics::handler))
         .merge(user_ai)
         .route_layer(middleware::from_fn_with_state(

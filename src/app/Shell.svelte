@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { auth } from "../domains/auth/auth.store.svelte";
   import { assistant } from "../domains/assistant/assistant.store.svelte";
   import { navigate } from "./router.svelte";
@@ -26,9 +26,14 @@
   onMount(() => {
     if (!auth.user) navigate("login");
     else {
-      void assistant.loadProviders().then(() => assistant.refreshSessions());
+      void assistant
+        .loadProviders()
+        .then(() => assistant.refreshSessions())
+        .then(() => assistant.startProviderWatch());
     }
   });
+
+  onDestroy(() => assistant.stopProviderWatch());
 </script>
 
 <div class="dot-bg min-h-dvh lg:h-dvh lg:overflow-hidden">
