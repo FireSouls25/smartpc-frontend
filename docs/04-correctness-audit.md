@@ -14,12 +14,10 @@ Fix: `"include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", ...]`
 (or `src/**/*`). — `tsconfig.json:13`
 
 ## H2 — E2E suite is not runnable as-is (no harness wiring)
-`playwright.config.ts` has no `webServer`; nothing starts vite or the sidecar.
-Specs hardcode `APP=http://127.0.0.1:5199` while `vite.config.ts` serves `:5173`
-and no npm script documents/serves `:5199`. `package.json` has no `test*`
-script at all. A fresh checkout cannot run tests without reverse-engineering
-three terminals (vite `--port 5199`, sidecar `--port 18081`, then playwright).
-See `05-testing.md`.
+✅ Fixed 2026-09-18: `webServer` boots sidecar (temp db) + vite from
+`npm run test:e2e` (`test:e2e:all` incl. `@slow`); ports live in one place
+(`playwright.config.ts` env, shared via `tests/helpers.ts`); minimal CI
+workflow runs the fast path. See `05-testing.md`.
 
 ## M1 — No request timeout/abort in `lib/api.ts`
 `fetch` has no `AbortSignal.timeout`; a hung sidecar leaves `send()` stuck
@@ -87,8 +85,8 @@ es↔en changes label heights → dot sits between rows until section change.
 Include `items` (or a resize observer) in the snap deps.
 
 ## L5 — `probe.spec.ts` is a debug leftover
-Console-dump + `/tmp/*.png` screenshots, no assertions. Either promote it to a
-boot smoke test (assert `#app` hydrates, fail on `pageerror`) or delete it.
+✅ Fixed 2026-09-18: deleted, replaced by `tests/smoke.spec.ts` (asserts
+`#app` hydrates with zero `pageerror`).
 
 ## Explicitly checked, no issue
 - `api()` 204 handling, error envelope mapping, gate+user token headers.

@@ -5,16 +5,19 @@ Nothing here is started — pick top-down.
 
 ## P0 — Test harness that runs (fixes H2, most of 05)
 
-1. **One-command E2E.** Add `test:e2e` script + `webServer` entries in
-   `playwright.config.ts` (vite on a fixed port, sidecar spawn with a temp db).
-   Align the port in one place (env, not three hardcoded `5199`s). Goal:
-   `npm run test:e2e` green from a fresh clone (minus optional Ollama).
-2. **Promote or delete `probe.spec.ts`** (L5): 5-line boot smoke test —
-   assert `#app` hydrates and zero `pageerror` — costs nothing, catches
-   broken builds in CI.
-3. **Split `layout.spec.ts` test 2.** The viewport test is fast and
-   deterministic; gate only the inference test behind model availability
-   (already `test.skip`s) and tag it `@slow` so default runs stay fast.
+✅ Done 2026-09-18 — verified `test:e2e` 3/3 (~16 s), `test:e2e:all` 4/4
+(~27 s, incl. real Ollama inference).
+
+1. ~~**One-command E2E.**~~ `test:e2e` / `test:e2e:all` scripts +
+   `webServer` in `playwright.config.ts` (sidecar with temp db + vite with
+   injected `VITE_*`, ports from one place via `APP_PORT`/`SIDECAR_PORT`/
+   `SIDECAR_TOKEN` env, shared with specs through `tests/helpers.ts`).
+   Minimal CI workflow (`.github/workflows/e2e.yml`) runs the fast path.
+2. ~~**Promote or delete `probe.spec.ts`**~~ Deleted; replaced by
+   `tests/smoke.spec.ts` (hydrates + zero `pageerror`).
+3. ~~**Split `layout.spec.ts` test 2.**~~ Inference test tagged `@slow`
+   (`test:e2e` inverts it); shared seeding extracted to `seedUser()`;
+   screenshots moved from `/tmp/` to `test-results/` (now gitignored).
 
 ## P1 — Correctness fixes (small, verified above)
 
@@ -65,8 +68,9 @@ Nothing here is started — pick top-down.
 17. **Contract test renderer↔sidecar**: snapshot `PROTOCOL` + key response
     shapes against a live sidecar in CI; fails fast on drift instead of the
     runtime banner.
-18. **CI workflow**: `npm run check` + `tsc` + unit tests + `cargo test` +
-    fast E2E (no-model path) on push. No `.github/` exists today.
+18. **CI workflow**: extend `.github/workflows/e2e.yml` (currently fast
+    Playwright path only) with `npm run check` + `tsc` + unit tests +
+    `cargo test`. No full pipeline exists yet.
 19. **Lint/format baseline**: eslint + prettier + `svelte-check` in one
     `npm run verify`; add the two `eslint-disable` comments' underlying rules
     (`no-explicit-any` in `api.ts:50`, `assistant.store:44`) by typing
