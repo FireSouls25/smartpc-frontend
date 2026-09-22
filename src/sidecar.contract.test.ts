@@ -168,6 +168,10 @@ describe("sidecar contract", () => {
     expect(body["device"] === null || typeof body["device"] === "string").toBe(
       true,
     );
+    expect(
+      Array.isArray(body["inputs"]) &&
+        (body["inputs"] as unknown[]).every((d) => typeof d === "string"),
+    ).toBe(true);
     expect(typeof body["model_ready"]).toBe("boolean");
   });
 

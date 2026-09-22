@@ -115,23 +115,46 @@ Every error is terminal and every exit clears exactly its own record:
   impossible here (HDMI/speakers silent, mic at noise floor), so
   transcription was proven on the JFK sample through the same engine path.
 
+## Devices: picker, not prayers
+
+`GET /v1/voice/status` reports `device` (current), `mic`, and `inputs[]`
+(every _capturable_ endpoint — playback outputs are filtered by probing for
+input configs). Settings → Voice has an input dropdown ("System default" +
+list); the choice persists (`smartpc.voice.device`) and rides in
+`POST /v1/voice/listen {device?}`. Unknown names 400 (`invalid_device`).
+
+Two hard-won details:
+
+- Same-name hardware appears once per subdevice: candidates are tried in
+  order with **mic-hint ranking** (DMIC/microphone/headset first, HDMI/
+  output/monitor last), because a silent line-in that opens fine is worse
+  than an honest error. Names compare trimmed (ALSA pads whitespace).
+- The session-start diagnostics line names the device that **actually
+  opened** (`dev=…`), with its real format (`2ch@48000Hz "F32"`).
+
 ## Debugging "nothing arrives" (read diagnostics top-down)
 
 Settings → AI → diagnostics mirrors the pipeline stages; find the last line
 present and the break is the next stage:
 
 1. `voice: listening (…, dev=<name>, vad thr=…)` — session alive, mic open.
-   Wrong `dev=` means cpal picked another input (OS sound settings).
-2. `voice: speech detected, capturing…` — VAD hears you. Absent after loud
-   clear speech → threshold too high for the mic (`VOICE_THRESHOLD`, e.g.
-   `0.01`), mic muted, or wrong device. Present constantly with no speech →
-   threshold too low (noisy room/fan).
-3. `voice: transcribing N samples…` + `voice: heard '…'` — whisper ran.
-   `(empty)` means the VAD fired on noise; check stage 2 tuning.
-4. Wake mode: `voice: no wake word in onset, re-arming ('…')` — the quoted
+   If `dev=` is a placeholder ("Default Audio Device") or the wrong hardware,
+   pick the real input in Settings → Voice → Entrada.
+2. `voice: audio flowing, first frame rms=…` — frames arrive at all. Absent
+   means the stream stalled (report it). `rms=0.0000` forever means digital
+   silence: muted at OS level or a dead subdevice — try another Entrada.
+   A quiet room reads ~0.001–0.005; that is normal, not broken.
+3. `voice: idle level rms=… max=…` (every ~15 s while waiting) — speak and
+   watch: if the max never approaches the threshold while you talk loudly,
+   the mic gain is too low (OS volume) or `VOICE_THRESHOLD` too high
+   (try `0.01`). If it fires constantly with no speech, threshold too low.
+4. `voice: speech detected, capturing…` — VAD hears you.
+5. `voice: transcribing N samples…` + `voice: heard '…'` — whisper ran.
+   `(empty)` means the VAD fired on noise; check stage 3 tuning.
+6. Wake mode: `voice: no wake word in onset, re-arming ('…')` — the quoted
    text is what whisper heard; if it never contains your wake word, say it
    first and alone, or check the language (`lang=` in line 1).
-5. Otherwise the transcript event fired — the break is renderer-side
+7. Otherwise the transcript event fired — the break is renderer-side
    (poll loop); that path is epoch-guarded and contract-tested.
 
 `t()` supports `{var}` interpolation for strings like the armed hint

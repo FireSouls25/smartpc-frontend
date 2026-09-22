@@ -44,13 +44,21 @@ pub fn input_device_name() -> Option<String> {
         .filter(|n| !n.trim().is_empty())
 }
 
-/// All input device names (for the settings picker). Empty when the host
-/// reports none — never an error: absence is data, not failure.
+/// All *capturable* input device names (for the settings picker). Playback
+/// endpoints (HDMI outputs, upmix plugins…) are filtered by probing for at
+/// least one supported input config — a name you can pick but never open is
+/// worse than no name. Empty when the host reports none — never an error:
+/// absence is data, not failure.
 pub fn list_input_devices() -> Vec<String> {
     cpal::default_host()
         .input_devices()
         .map(|devices| {
             devices
+                .filter(|d| {
+                    d.supported_input_configs()
+                        .map(|mut it| it.next().is_some())
+                        .unwrap_or(false)
+                })
                 .filter_map(|d| d.description().ok())
                 .map(|desc| desc.name().to_string())
                 .filter(|n| !n.trim().is_empty())
@@ -63,6 +71,7 @@ pub fn list_input_devices() -> Vec<String> {
 /// are a classic "VAD hears nothing useful" cause).
 #[derive(Debug, Clone)]
 pub struct CaptureDesc {
+    pub device: String,
     pub rate: u32,
     pub channels: usize,
     pub format: String,
@@ -98,6 +107,28 @@ pub fn resample_linear(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> 
 
 fn i16_to_f32(v: i16) -> f32 {
     v as f32 / 32768.0
+}
+
+/// Rank a device description for capture likelihood: mic-looking hardware
+/// first, anything output-smelling last. Lower is better.
+fn mic_hint_score(haystack_lower: &str) -> usize {
+    const HINTS: &[&str] = &[
+        "dmic",
+        "microphone",
+        "headset",
+        "mic",
+        "input",
+        "capture",
+        "array",
+    ];
+    const ANTI_HINTS: &[&str] = &["hdmi", "output", "speaker", "playback", "monitor"];
+    if ANTI_HINTS.iter().any(|h| haystack_lower.contains(h)) {
+        return usize::MAX - 1;
+    }
+    HINTS
+        .iter()
+        .position(|h| haystack_lower.contains(h))
+        .unwrap_or(HINTS.len())
 }
 
 fn u16_to_f32(v: u16) -> f32 {
@@ -143,19 +174,73 @@ pub fn open_capture(
     wanted: Option<&str>,
 ) -> Result<(cpal::Stream, CaptureDesc), CaptureError> {
     let host = cpal::default_host();
-    let device = match wanted.filter(|w| !w.trim().is_empty()) {
-        Some(name) => host
-            .input_devices()
-            .map_err(|e| CaptureError::Unsupported(e.to_string()))?
-            .find(|d| {
-                d.description()
-                    .is_ok_and(|desc| desc.name() == name)
-            })
-            .ok_or_else(|| {
-                CaptureError::Unsupported(format!("input device not found: {name}"))
-            })?,
-        None => host.default_input_device().ok_or(CaptureError::NoMicrophone)?,
+    // Same-name hardware appears once per subdevice/direction: try every
+    // match in order (the first "sof-hda-dsp" may be output-only or busy)
+    // and report the last error only if none opens. Names compare trimmed:
+    // ALSA pads some with trailing whitespace.
+    let mut candidates: Vec<cpal::Device> = match wanted
+        .filter(|w| !w.trim().is_empty())
+    {
+        Some(name) => {
+            let mut all: Vec<(usize, cpal::Device)> = host
+                .input_devices()
+                .map_err(|e| CaptureError::Unsupported(e.to_string()))?
+                .filter(|d| {
+                    d.description()
+                        .is_ok_and(|desc| desc.name().trim() == name.trim())
+                })
+                .map(|d| {
+                    let score = d
+                        .description()
+                        .ok()
+                        .map(|desc| {
+                            let hay = format!(
+                                "{} {}",
+                                desc.name(),
+                                desc.extended().collect::<Vec<_>>().join(" ")
+                            )
+                            .to_lowercase();
+                            mic_hint_score(&hay)
+                        })
+                        .unwrap_or(usize::MAX);
+                    (score, d)
+                })
+                .collect();
+            if all.is_empty() {
+                return Err(CaptureError::Unsupported(format!(
+                    "input device not found: {name}"
+                )));
+            }
+            // Mic-looking subdevices (DMIC, headset, "mic", …) first: a
+            // silent line-in that opens fine is worse than useless.
+            all.sort_by_key(|(score, _)| *score);
+            all.into_iter().map(|(_, d)| d).collect()
+        }
+        None => vec![host.default_input_device().ok_or(CaptureError::NoMicrophone)?],
     };
+    let mut last_err: Option<CaptureError> = None;
+    for device in candidates {
+        let name = device
+            .description()
+            .ok()
+            .map(|d| d.name().to_string())
+            .unwrap_or_else(|| "?".to_string());
+        match open_device(device, &tx) {
+            Ok((stream, mut desc)) => {
+                desc.device = name;
+                return Ok((stream, desc));
+            }
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.unwrap_or(CaptureError::NoMicrophone))
+}
+
+/// Open one concrete device (factored so same-name candidates each get tried).
+fn open_device(
+    device: cpal::Device,
+    tx: &SyncSender<Result<Vec<f32>, String>>,
+) -> Result<(cpal::Stream, CaptureDesc), CaptureError> {
     let desc = device
         .description()
         .ok()
@@ -171,13 +256,14 @@ pub fn open_capture(
     }
     let stream_config: cpal::StreamConfig = config.config();
     let format = format!("{:?}", config.sample_format());
-    let err_tx = tx.clone();
+    // (*tx).clone(): clone the sender itself, not the reference.
+    let err_tx = (*tx).clone();
     let err_fn = move |err| {
         let _ = err_tx.send(Err(format!("{err}")));
     };
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => {
-            let mut framer = framer(&tx, from_rate);
+            let mut framer = framer(tx, from_rate);
             device.build_input_stream(
                 stream_config.clone(),
                 move |data: &[f32], _| {
@@ -188,7 +274,7 @@ pub fn open_capture(
             )
         }
         cpal::SampleFormat::I16 => {
-            let mut framer = framer(&tx, from_rate);
+            let mut framer = framer(tx, from_rate);
             device.build_input_stream(
                 stream_config.clone(),
                 move |data: &[i16], _| {
@@ -201,7 +287,7 @@ pub fn open_capture(
             )
         }
         cpal::SampleFormat::U16 => {
-            let mut framer = framer(&tx, from_rate);
+            let mut framer = framer(tx, from_rate);
             device.build_input_stream(
                 stream_config.clone(),
                 move |data: &[u16], _| {
@@ -226,6 +312,7 @@ pub fn open_capture(
     Ok((
         stream,
         CaptureDesc {
+            device: "?".to_string(),
             rate: from_rate,
             channels,
             format,
@@ -302,5 +389,16 @@ mod tests {
         let (tx, rx) = sync_channel::<Result<Vec<f32>, String>>(128);
         tx.try_send(Ok(vec![0.0; FRAME_SAMPLES])).unwrap();
         assert_eq!(rx.recv().unwrap().unwrap().len(), FRAME_SAMPLES);
+    }
+
+    #[test]
+    fn mic_hints_rank_dmic_first_and_hdmi_last() {
+        assert!(mic_hint_score("sof-hda-dsp dmic16khz digital mic") < mic_hint_score("line in"));
+        assert!(mic_hint_score("usb microphone headset") < mic_hint_score("plain thing"));
+        assert_eq!(
+            mic_hint_score("hdmi output monitor"),
+            usize::MAX - 1
+        );
+        assert!(mic_hint_score("default audio device") < usize::MAX - 1);
     }
 }

@@ -102,6 +102,7 @@ async function start(requested?: VoiceMode): Promise<void> {
       mode,
       wake_word: wakeWord,
       lang: getLang(),
+      ...(device ? { device } : {}),
     });
     epoch = res.epoch;
   } catch (err) {
@@ -234,6 +235,18 @@ function setWakeWord(w: string): void {
   persist(WAKE_KEY, wakeWord);
 }
 
+function setDevice(d: string | null): void {
+  device = d?.trim().slice(0, 128) || null;
+  if (device) persist(DEVICE_KEY, device);
+  else {
+    try {
+      window.localStorage.removeItem(DEVICE_KEY);
+    } catch {
+      /* private mode */
+    }
+  }
+}
+
 export const voice = {
   get phase(): VoicePhase {
     return phase;
@@ -243,6 +256,9 @@ export const voice = {
   },
   get wakeWord(): string {
     return wakeWord;
+  },
+  get device(): string | null {
+    return device;
   },
   get error(): string {
     return error;
@@ -261,4 +277,5 @@ export const voice = {
   toggle,
   setMode,
   setWakeWord,
+  setDevice,
 };

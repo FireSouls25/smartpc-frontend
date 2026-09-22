@@ -43,6 +43,8 @@ export const es = {
   "voice.wakeHint":
     "Empieza a grabar cuando la oye. Todo ocurre en este equipo.",
   "voice.mic": "Micrófono",
+  "voice.input": "Entrada",
+  "voice.systemDefault": "Predeterminada del sistema",
   "voice.model": "Modelo",
   "voice.ready": "Listo",
   "voice.notReady": "No disponible",

@@ -115,6 +115,7 @@ test("settings route deep-links sections", async ({ page }) => {
     .click();
   await expect(page.getByText(/Modo|Mode/).first()).toBeVisible();
   await expect(page.getByPlaceholder("hey")).toBeVisible();
+  await expect(page.getByText(/Entrada|Input/).first()).toBeVisible();
   expect(page.url()).toContain("#/settings/2");
   await page.screenshot({ path: "test-results/layout-settings-voice.png" });
 

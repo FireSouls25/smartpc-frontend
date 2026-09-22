@@ -42,6 +42,8 @@ export const en: Record<I18nKey, string> = {
   "voice.wakeHint":
     "Starts recording when heard. Everything stays on this machine.",
   "voice.mic": "Microphone",
+  "voice.input": "Input",
+  "voice.systemDefault": "System default",
   "voice.model": "Model",
   "voice.ready": "Ready",
   "voice.notReady": "Unavailable",

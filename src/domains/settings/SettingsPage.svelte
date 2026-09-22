@@ -64,8 +64,9 @@
       diagLoaded = true;
       void loadDiag();
     }
-    if (section === 2 && !voiceLoaded) {
-      voiceLoaded = true;
+    if (section === 2) {
+      // Voice status is live (mic hotplug, session state): refresh on every
+      // entry, unlike the append-only diagnostics log.
       void loadVoiceStatus();
     }
   });
@@ -82,9 +83,9 @@
     }
   }
 
-  // Voice status (mic + model readiness). Same lazy pattern as diagnostics.
+  // Voice status (mic + model readiness). Refreshed on every entry —
+  // see the section effect above.
   let voiceStatus = $state<VoiceStatus | null>(null);
-  let voiceLoaded = $state(false);
 
   async function loadVoiceStatus(): Promise<void> {
     try {
@@ -274,9 +275,27 @@
       {:else if section === 2}
         <div class="flex flex-col gap-4">
           <p class="muted text-sm">{t("voice.localNote")}</p>
-          {#if voiceStatus?.device}
-            <p class="faint text-xs">{voiceStatus.device}</p>
-          {/if}
+          <div>
+            <p class="label">{t("voice.input")}</p>
+            <SelectMenu
+              label={t("voice.input")}
+              value={voice.device ?? ""}
+              options={[
+                { value: "", label: t("voice.systemDefault") },
+                ...(voiceStatus?.inputs ?? []).map((d) => ({
+                  value: d,
+                  label: d,
+                })),
+              ]}
+              onChange={(v) => {
+                voice.setDevice(v || null);
+                void loadVoiceStatus();
+              }}
+            />
+            {#if voiceStatus?.device}
+              <p class="faint mt-1 text-xs">{voiceStatus.device}</p>
+            {/if}
+          </div>
           <div class="flex flex-wrap gap-2">
             <span class="chip">
               <span

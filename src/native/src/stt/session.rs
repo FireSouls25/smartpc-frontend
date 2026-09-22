@@ -601,7 +601,7 @@ impl Listener {
             "voice: listening (mode={}, lang={}, dev={}, {}ch@{}Hz {:?}, vad thr={} sil_ms={} min_ms={})",
             self.opts.mode.as_str(),
             self.opts.lang,
-            audio::input_device_name().unwrap_or_else(|| "?".to_string()),
+            desc.device,
             desc.channels,
             desc.rate,
             desc.format,
