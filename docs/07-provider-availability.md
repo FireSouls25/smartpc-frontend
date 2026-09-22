@@ -48,6 +48,17 @@ store poll (every PROVIDER_POLL_MS = 3000, skipped when tab hidden)
 - Start/timeout events go to `diagnostics::push`, so they show up in
   Settings → AI → diagnostics like every other backend event.
 
+## Missing-model auto-pull (2026-09-22)
+
+Fresh installs ask for `llama3.1` while only e.g. `gemma4` is downloaded —
+every turn (typed or voice-driven) failed `model not found`. Now `chat`
+and `run` call `ai/ollama.rs::ensure_model_present` for ollama targets:
+exact or tag-implied match (`llama3.1` ↔ `llama3.1:8b`) skips; otherwise one
+`ollama pull` runs (per-model lock, 30 min cap, progress in diagnostics),
+then the turn proceeds. A down server is not a pull failure (the turn
+reports `unreachable` as before). Pull failure → 502 `model_pull_failed`
+naming the installed models so the user can pick one in Settings → AI model.
+
 ## Deliberate non-goals
 
 - No auto-switch of the active provider when another comes online — browsing

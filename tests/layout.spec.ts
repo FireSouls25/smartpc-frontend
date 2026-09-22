@@ -120,6 +120,28 @@ test("settings route deep-links sections", async ({ page }) => {
     page.getByText(/Leer respuestas|Read replies/).first(),
   ).toBeVisible();
   expect(page.url()).toContain("#/settings/2");
+
+  // Device picker: opens, lists deduped options (duplicate ALSA names
+  // used to crash the keyed each block → empty menu), persists selection.
+  const pageErrors: string[] = [];
+  page.on("pageerror", (e) => pageErrors.push(String(e).slice(0, 120)));
+  await page.getByRole("button", { name: /Entrada|Input/ }).click();
+  const deviceOptions = page.getByRole("option");
+  await expect(deviceOptions.first()).toBeVisible({ timeout: 5000 });
+  expect(await deviceOptions.count()).toBeGreaterThanOrEqual(1);
+  if ((await deviceOptions.count()) >= 2) {
+    await deviceOptions.nth(1).click();
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() =>
+            window.localStorage.getItem("smartpc.voice.device"),
+          ),
+        { timeout: 5000 },
+      )
+      .not.toBeNull();
+  }
+  expect(pageErrors.filter((e) => e.includes("each_key"))).toEqual([]);
   await page.screenshot({ path: "test-results/layout-settings-voice.png" });
 
   // Unknown hashes fall back home.

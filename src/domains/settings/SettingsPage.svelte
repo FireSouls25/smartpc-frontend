@@ -95,6 +95,24 @@
     }
   }
 
+  /**
+   * Device options, deduped by value: ALSA reports one entry per
+   * subdevice/direction, so raw names repeat ("sof-hda-dsp, " ×7) and would
+   * crash the keyed each block (each_key_duplicate → empty list). The server
+   * tries every same-name match on selection, so collapsing loses nothing.
+   */
+  function inputOptions(): { value: string; label: string }[] {
+    const names = voiceStatus?.inputs ?? [];
+    const out: { value: string; label: string }[] = [
+      { value: "", label: t("voice.systemDefault") },
+    ];
+    for (const d of names) {
+      if (out.some((o) => o.value === d)) continue;
+      out.push({ value: d, label: d });
+    }
+    return out;
+  }
+
   async function copyDiag(): Promise<void> {
     try {
       await navigator.clipboard.writeText(diagLines.join("\n"));
@@ -205,6 +223,7 @@
                 disabled: !p.available,
                 hint: p.available ? undefined : t("providers.offline"),
               }))}
+              align="down"
               onChange={(v) => void providers.selectProvider(v)}
             />
           </div>
@@ -216,6 +235,7 @@
               options={providers
                 .activeModels()
                 .map((m) => ({ value: m, label: m }))}
+              align="down"
               onChange={(v) => void providers.selectModel(v)}
             />
           </div>
@@ -280,13 +300,8 @@
             <SelectMenu
               label={t("voice.input")}
               value={voice.device ?? ""}
-              options={[
-                { value: "", label: t("voice.systemDefault") },
-                ...(voiceStatus?.inputs ?? []).map((d) => ({
-                  value: d,
-                  label: d,
-                })),
-              ]}
+              options={inputOptions()}
+              align="down"
               onChange={(v) => {
                 voice.setDevice(v || null);
                 void loadVoiceStatus();

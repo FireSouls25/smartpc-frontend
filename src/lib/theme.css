@@ -310,6 +310,16 @@ body {
     overflow-y: auto;
     min-width: 100%;
   }
+  /* Top-anchored menus (Settings pages): the trigger wrapper is full-width,
+   * so right-anchoring lands the list at the far edge of the section.
+   * Left-anchor under the trigger instead, spanning at least its width. */
+  .dropdown-down {
+    left: 0;
+    right: auto;
+    min-width: 100%;
+    max-height: 16rem;
+    overflow-y: auto;
+  }
   .switch {
     position: relative;
     width: 2.75rem;

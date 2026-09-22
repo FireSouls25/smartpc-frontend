@@ -244,6 +244,13 @@ pub async fn chat(
     if let Err(e) = provider.check_usable(&model_name) {
         return error_response(&e);
     }
+    // Missing local model (fresh installs ask for `llama3.1`): download it
+    // once instead of failing every turn, typed or voice-driven.
+    if provider.name() == "ollama" {
+        if let Err(e) = crate::ai::ollama::ensure_model_present(&model_name).await {
+            return pull_error(&e);
+        }
+    }
 
     // Reuse the session (ownership checked) or create it from the first message.
     let session_id: String = {
@@ -665,6 +672,27 @@ fn chat_error(provider: &str, model: &str, e: &ProviderError) -> Response {
     error_response(e)
 }
 
+/// A first-use `ollama pull` failed: name the installed models so the UI (or
+/// the user in Settings → AI model) can pick something that answers now.
+fn pull_error(e: &crate::ai::ollama::PullError) -> Response {
+    let installed = if e.installed.is_empty() {
+        "none".to_string()
+    } else {
+        e.installed.join(", ")
+    };
+    (
+        StatusCode::BAD_GATEWAY,
+        Json(serde_json::json!({ "error": {
+            "code": "model_pull_failed",
+            "message": format!(
+                "model '{}' is not installed and downloading it failed ({}). Installed: {}. Pick one in Settings → AI model, or run `ollama pull {}`.",
+                e.model, e.detail, installed, e.model
+            ),
+        } })),
+    )
+        .into_response()
+}
+
 pub async fn run(
     State(s): State<AppState>,
     Extension(AuthedUser(uid)): Extension<AuthedUser>,
@@ -715,6 +743,12 @@ pub async fn run(
         .unwrap_or_else(|| provider.default_model().to_string());
     if let Err(e) = provider.check_usable(&model) {
         return error_response(&e);
+    }
+    // Same first-use download as `chat` (agentic turns need the model too).
+    if provider.name() == "ollama" {
+        if let Err(e) = crate::ai::ollama::ensure_model_present(&model).await {
+            return pull_error(&e);
+        }
     }
 
     let session_id: String = {

@@ -124,14 +124,26 @@ input configs). Settings → Voice has an input dropdown ("System default" +
 list); the choice persists (`smartpc.voice.device`) and rides in
 `POST /v1/voice/listen {device?}`. Unknown names 400 (`invalid_device`).
 
-Two hard-won details:
+Two hard-won details (plus two from 2026-09-22):
 
 - Same-name hardware appears once per subdevice: candidates are tried in
   order with **mic-hint ranking** (DMIC/microphone/headset first, HDMI/
   output/monitor last), because a silent line-in that opens fine is worse
   than an honest error. Names compare trimmed (ALSA pads whitespace).
-- The session-start diagnostics line names the device that **actually
+- "System default" no longer means cpal's default PCM (on PipeWire-via-ALSA
+  it opens fine and then delivers zero frames — a silent stall). With no
+  device picked the sidecar opens the best-ranked live input; the OS mixer
+  (PipeWire/Pulse, which follows the default source) outranks raw nodes.
+  The session-start diagnostics line names the device that **actually
   opened** (`dev=…`), with its real format (`2ch@48000Hz "F32"`).
+- Virtual sinks ("Discard all samples…", `null`) are filtered out of the
+  picker entirely: the null sink floods zero frames at full speed, so the
+  VAD never fires and manual sessions never finalize.
+- The picker dedupes by value: raw ALSA names repeat per subdevice and
+  duplicate keys crash Svelte's keyed each block (empty menu, `each_key`
+  error — covered by an E2E regression test asserting options render,
+  selection persists, and no key errors). Server-side matching is unaffected
+  (every same-name candidate is still tried).
 
 ## Debugging "nothing arrives" (read diagnostics top-down)
 

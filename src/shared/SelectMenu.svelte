@@ -76,7 +76,7 @@
     <div
       role="listbox"
       aria-label={label}
-      class="dropdown msg-in {align === 'up' ? 'dropdown-up' : ''}"
+      class="dropdown msg-in {align === 'up' ? 'dropdown-up' : 'dropdown-down'}"
     >
       {#each options as o (o.value)}
         <button

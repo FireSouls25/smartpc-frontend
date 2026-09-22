@@ -50,21 +50,12 @@ pub fn input_device_name() -> Option<String> {
 /// worse than no name. Empty when the host reports none — never an error:
 /// absence is data, not failure.
 pub fn list_input_devices() -> Vec<String> {
-    cpal::default_host()
-        .input_devices()
-        .map(|devices| {
-            devices
-                .filter(|d| {
-                    d.supported_input_configs()
-                        .map(|mut it| it.next().is_some())
-                        .unwrap_or(false)
-                })
-                .filter_map(|d| d.description().ok())
-                .map(|desc| desc.name().to_string())
-                .filter(|n| !n.trim().is_empty())
-                .collect()
-        })
-        .unwrap_or_default()
+    ranked_input_devices()
+        .into_iter()
+        .filter_map(|d| d.description().ok())
+        .map(|desc| desc.name().to_string())
+        .filter(|n| !n.trim().is_empty())
+        .collect()
 }
 
 /// What the opened stream actually runs at (logged: sample-rate surprises
@@ -110,9 +101,14 @@ fn i16_to_f32(v: i16) -> f32 {
 }
 
 /// Rank a device description for capture likelihood: mic-looking hardware
-/// first, anything output-smelling last. Lower is better.
+/// first, anything output-smelling last. Lower is better. The OS mixer
+/// (PipeWire/Pulse) leads: it follows the user's default source, which is
+/// what "System default" means — while ALSA's `default` PCM sometimes opens
+/// fine and then never delivers a frame.
 fn mic_hint_score(haystack_lower: &str) -> usize {
     const HINTS: &[&str] = &[
+        "pipewire",
+        "pulse",
         "dmic",
         "microphone",
         "headset",
@@ -129,6 +125,55 @@ fn mic_hint_score(haystack_lower: &str) -> usize {
         .iter()
         .position(|h| haystack_lower.contains(h))
         .unwrap_or(HINTS.len())
+}
+
+/// Virtual sinks that open fine but can never hear a room: the null sink
+/// floods zero frames at full speed (the VAD never fires, sessions never
+/// finalize), so such devices are neither listed nor auto-picked.
+fn is_sink_name(name: &str) -> bool {
+    let n = name.trim().to_lowercase();
+    n == "null" || n.contains("discard") || n.contains("zero samples")
+}
+
+fn device_score(d: &cpal::Device) -> usize {
+    d.description()
+        .ok()
+        .map(|desc| {
+            let hay = format!(
+                "{} {}",
+                desc.name(),
+                desc.extended().collect::<Vec<_>>().join(" ")
+            )
+            .to_lowercase();
+            mic_hint_score(&hay)
+        })
+        .unwrap_or(usize::MAX)
+}
+
+/// Every capturable, non-sink input, mic-likely first. Empty when the host
+/// reports none — never an error: absence is data, not failure.
+fn ranked_input_devices() -> Vec<cpal::Device> {
+    let mut all: Vec<(usize, cpal::Device)> = cpal::default_host()
+        .input_devices()
+        .map(|devices| {
+            devices
+                .filter(|d| {
+                    d.description().is_ok_and(|desc| {
+                        let n = desc.name();
+                        !n.trim().is_empty() && !is_sink_name(n)
+                    })
+                })
+                .filter(|d| {
+                    d.supported_input_configs()
+                        .map(|mut it| it.next().is_some())
+                        .unwrap_or(false)
+                })
+                .map(|d| (device_score(&d), d))
+                .collect()
+        })
+        .unwrap_or_default();
+    all.sort_by_key(|(score, _)| *score);
+    all.into_iter().map(|(_, d)| d).collect()
 }
 
 fn u16_to_f32(v: u16) -> f32 {
@@ -189,22 +234,7 @@ pub fn open_capture(
                     d.description()
                         .is_ok_and(|desc| desc.name().trim() == name.trim())
                 })
-                .map(|d| {
-                    let score = d
-                        .description()
-                        .ok()
-                        .map(|desc| {
-                            let hay = format!(
-                                "{} {}",
-                                desc.name(),
-                                desc.extended().collect::<Vec<_>>().join(" ")
-                            )
-                            .to_lowercase();
-                            mic_hint_score(&hay)
-                        })
-                        .unwrap_or(usize::MAX);
-                    (score, d)
-                })
+                .map(|d| (device_score(&d), d))
                 .collect();
             if all.is_empty() {
                 return Err(CaptureError::Unsupported(format!(
@@ -216,7 +246,19 @@ pub fn open_capture(
             all.sort_by_key(|(score, _)| *score);
             all.into_iter().map(|(_, d)| d).collect()
         }
-        None => vec![host.default_input_device().ok_or(CaptureError::NoMicrophone)?],
+        None => {
+            // No pick: the best-ranked live input, not cpal's default —
+            // on PipeWire-via-ALSA systems the default PCM opens fine and
+            // then never delivers a frame (silent stall). Empty only when
+            // the host reports no inputs at all (headless/CI): keep the
+            // honest NoMicrophone path via the cpal default.
+            let ranked = ranked_input_devices();
+            if ranked.is_empty() {
+                vec![host.default_input_device().ok_or(CaptureError::NoMicrophone)?]
+            } else {
+                ranked
+            }
+        }
     };
     let mut last_err: Option<CaptureError> = None;
     for device in candidates {
@@ -392,5 +434,18 @@ mod tests {
             usize::MAX - 1
         );
         assert!(mic_hint_score("default audio device") < usize::MAX - 1);
+    }
+
+    #[test]
+    fn mixer_leads_generic_and_sinks_are_spotted() {
+        // "System default" should follow the OS mixer, not a random node.
+        assert!(mic_hint_score("pipewire sound server") < mic_hint_score("jack audio connection kit"));
+        assert!(mic_hint_score("pulseaudio sound server") < mic_hint_score("usb headset"));
+        assert!(is_sink_name(
+            "Discard all samples (playback) or generate zero samples (capture)"
+        ));
+        assert!(is_sink_name("null"));
+        assert!(!is_sink_name("PipeWire Sound Server"));
+        assert!(!is_sink_name("sof-hda-dsp, "));
     }
 }
