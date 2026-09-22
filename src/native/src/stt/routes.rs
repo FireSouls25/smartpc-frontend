@@ -32,6 +32,7 @@ pub struct ListenBody {
     pub wake_word: Option<String>,
     pub lang: Option<String>,
     pub model: Option<String>,
+    pub device: Option<String>,
 }
 
 /// Starts a session. Blocks on first-use model download (minutes on slow
@@ -40,7 +41,7 @@ pub async fn listen(
     State(s): State<AppState>,
     Json(b): Json<ListenBody>,
 ) -> impl IntoResponse {
-    let opts = match parse_opts(b.mode.as_deref(), b.wake_word.as_deref(), b.lang.as_deref(), b.model.as_deref()) {
+    let opts = match parse_opts(b.mode.as_deref(), b.wake_word.as_deref(), b.lang.as_deref(), b.model.as_deref(), b.device.as_deref()) {
         Ok(o) => o,
         Err(e) => return start_error_response(&e),
     };
@@ -48,9 +49,9 @@ pub async fn listen(
     // Sync, blocking, potentially minutes: off the async workers.
     let res = tokio::task::spawn_blocking(move || voice.start(opts)).await;
     match res {
-        Ok(Ok(())) => (
+        Ok(Ok(epoch)) => (
             StatusCode::OK,
-            Json(serde_json::json!({ "ok": true })),
+            Json(serde_json::json!({ "ok": true, "epoch": epoch })),
         )
             .into_response(),
         Ok(Err(e)) => start_error_response(&e),

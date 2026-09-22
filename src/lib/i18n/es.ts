@@ -31,6 +31,8 @@ export const es = {
   "voice.unsupported": "Sin micrófono en este equipo; conecta uno para hablar.",
   "voice.error": "Falló el reconocimiento de voz; prueba de nuevo.",
   "voice.starting": "Iniciando voz local…",
+  "voice.hello": "¡Te escucho, dime!",
+  "voice.sayHey": "Di «{word}» para empezar",
   "voice.busy":
     "El asistente está ocupado; tu texto quedó en el campo de entrada.",
   "voice.downloading": "Descargando el modelo de voz (solo la primera vez)…",

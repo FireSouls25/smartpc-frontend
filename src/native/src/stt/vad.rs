@@ -90,6 +90,19 @@ impl Vad {
         }
     }
 
+    /// Introspection for diagnostics (tuning without a debugger attached).
+    pub fn threshold(&self) -> f32 {
+        self.cfg.threshold
+    }
+
+    pub fn silence_ms(&self) -> u64 {
+        self.cfg.silence_frames as u64 * 30
+    }
+
+    pub fn min_speech_ms(&self) -> u64 {
+        self.cfg.min_speech_frames as u64 * 30
+    }
+
     pub fn feed(&mut self, rms: f32) -> VadTransition {
         let speech = rms >= self.cfg.threshold;
         match (&self.state, speech) {

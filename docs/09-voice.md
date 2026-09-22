@@ -31,10 +31,11 @@ wake mode:   command utterance ──► transcribe ──► event, re-arm
   the next utterance is the command; re-arms until stopped.
 
 Wake detection is textual, not acoustic: VAD-gated onsets are transcribed
-with tiny and matched whole-word ("they" ≠ "hey"; "¡Hey!" = "hey").
-Cost: one tiny transcription per speech onset while armed — nothing runs
-continuously. Limitation, stated: any mention wakes, background chatter
-costs CPU, accents are significant.
+with tiny and split into match + remainder (`split_wake_command`).
+Whole-word for single words ("they" ≠ "hey"; "¡Hey!" = "hey"), substring
+for phrases. Cost: one tiny transcription per speech onset while armed —
+nothing runs continuously. Limitation, stated: any mention wakes, background
+chatter costs CPU, accents are significant.
 
 ## Silence finalize
 
@@ -64,8 +65,8 @@ mic, model_ready}`. Never blocks on audio.
 invalid_wake_word|invalid_lang` 400, `model_failed` 502.
 - `POST /v1/voice/stop` → `{ok}` always (idempotent).
 - `GET /v1/voice/events?cursor=N` → `{events, next}`, holds ~25 s.
-  Events: `capturing{active}`, `wake{word}`, `transcript{text}`,
-  `error{code,message}`, `end{}`.
+  Events: `started{}`, `capturing{active}`, `wake{word}`, `transcript{text}`,
+  `error{code,message}`, `end{}` — each with `seq` + session `epoch`.
 
 ## Frontend (`domains/voice/`)
 
@@ -77,6 +78,29 @@ the agent is busy the words land in the composer instead of being lost.
 Orb: capturing → `listening`; handoff leaves the agent's `thinking` alone.
 Mic button toggles the preferred mode; Settings → Voice holds mode, wake
 word, mic/model status. Prefs: `smartpc.voice.mode`, `smartpc.voice.wake`.
+
+## Session integrity (learned from a real stuck-session bug)
+
+The event queue is global across sessions, so every event carries its
+session `epoch` (`listen` returns it): clients drop foreign-epoch events
+instead of acting on them, and `start()` clears the queue. Without this, a
+new poller starting at cursor 0 replayed the previous session's `End`,
+killed its own poll loop instantly, and orphaned a live session that then
+409'd every later listen — while never delivering transcripts.
+
+Every error is terminal and every exit clears exactly its own record:
+
+- `stop()` takes the record immediately (recovery works even if the thread
+  already died) and flags the thread; the thread always emits the single
+  `End` on exit. No double-Ends, no orphans.
+- Listener exits are epoch-guarded: a slow death can never wipe a newer
+  session's record, so stop→listen in quick succession is safe.
+- A panicking listener is caught: `Error{voice_crash}` + `End` + release.
+- The frontend treats errors as terminal too: it forces `stop()` cleanup
+  before showing the message, so the next press always starts fresh
+  (previously: permanent `already_listening` 409s).
+- The mic button is disabled while `starting` (a press mid-download used to
+  cancel the very listen it was waiting for).
 
 ## Platforms & build
 
@@ -91,12 +115,35 @@ word, mic/model status. Prefs: `smartpc.voice.mode`, `smartpc.voice.wake`.
   impossible here (HDMI/speakers silent, mic at noise floor), so
   transcription was proven on the JFK sample through the same engine path.
 
+## Debugging "nothing arrives" (read diagnostics top-down)
+
+Settings → AI → diagnostics mirrors the pipeline stages; find the last line
+present and the break is the next stage:
+
+1. `voice: listening (…, dev=<name>, vad thr=…)` — session alive, mic open.
+   Wrong `dev=` means cpal picked another input (OS sound settings).
+2. `voice: speech detected, capturing…` — VAD hears you. Absent after loud
+   clear speech → threshold too high for the mic (`VOICE_THRESHOLD`, e.g.
+   `0.01`), mic muted, or wrong device. Present constantly with no speech →
+   threshold too low (noisy room/fan).
+3. `voice: transcribing N samples…` + `voice: heard '…'` — whisper ran.
+   `(empty)` means the VAD fired on noise; check stage 2 tuning.
+4. Wake mode: `voice: no wake word in onset, re-arming ('…')` — the quoted
+   text is what whisper heard; if it never contains your wake word, say it
+   first and alone, or check the language (`lang=` in line 1).
+5. Otherwise the transcript event fired — the break is renderer-side
+   (poll loop); that path is epoch-guarded and contract-tested.
+
+`t()` supports `{var}` interpolation for strings like the armed hint
+(`Di «{word}» para empezar`), added for the wake-mode "say hey" cue.
+
 ## Limits & next
 
 - No partial transcripts (whisper is batch; VAD level could feed a meter).
 - One global session; no TTS reply path yet.
 - Wake word is single-phrase text match — a proper acoustic spotter
   (openWakeWord/Porcupine) is the upgrade if false-wake cost ever matters.
-- 19 Rust unit tests (VAD machine, wake match, resample/mixdown, model map);
-  contract pins status shape + listen validation; E2E covers the Voice
-  settings section (headless has no mic — asserts graceful `notReady`).
+- 25 Rust unit tests (VAD machine incl. introspection, wake match + split,
+  resample/mixdown, model map, `parse_opts`, session stop idempotency);
+  contract pins status shape + listen validation + epoch wire; E2E covers the
+  Voice settings section (headless has no mic — asserts graceful `notReady`).

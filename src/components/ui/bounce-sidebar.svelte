@@ -135,9 +135,7 @@
     class="absolute left-2 top-0 rounded-full transition-opacity duration-150"
     style="width: 6px; height: 6px; background-color: {dotColor}; opacity: {ready
       ? 1
-      : 0}; transform: {dotY === null
-      ? 'none'
-      : `translate(0px, ${dotY}px)`};"
+      : 0}; transform: {dotY === null ? 'none' : `translate(0px, ${dotY}px)`};"
   ></span>
 
   {#each items as item, index (index)}

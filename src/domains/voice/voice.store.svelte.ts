@@ -13,6 +13,7 @@ export type VoicePhase =
 
 const MODE_KEY = "smartpc.voice.mode";
 const WAKE_KEY = "smartpc.voice.wake";
+const DEVICE_KEY = "smartpc.voice.device";
 export const DEFAULT_WAKE_WORD = "hey";
 
 function loadMode(): VoiceMode {
@@ -32,6 +33,15 @@ function loadWake(): string {
   }
 }
 
+function loadDevice(): string | null {
+  try {
+    const d = (window.localStorage.getItem(DEVICE_KEY) || "").trim();
+    return d ? d.slice(0, 128) : null;
+  } catch {
+    return null;
+  }
+}
+
 function persist(key: string, value: string): void {
   try {
     window.localStorage.setItem(key, value);
@@ -43,10 +53,26 @@ function persist(key: string, value: string): void {
 const sleep = (ms: number): Promise<void> =>
   new Promise((r) => setTimeout(r, ms));
 
+function setNotice(text: string): void {
+  notice = text;
+  if (noticeTimer !== null) window.clearTimeout(noticeTimer);
+  if (text) {
+    noticeTimer = window.setTimeout(() => {
+      notice = "";
+      noticeTimer = null;
+    }, 4000);
+  }
+}
+
 let phase = $state<VoicePhase>("idle");
 let mode = $state<VoiceMode>(loadMode());
 let wakeWord = $state<string>(loadWake());
+let device = $state<string | null>(loadDevice());
 let error = $state("");
+// Transient acknowledgment ("heard the wake word, talk now"), cleared after
+// a few seconds or on the next state change.
+let notice = $state("");
+let noticeTimer: number | null = null;
 // Generation counter: stale async work (a listen that resolves after stop,
 // an old poll loop) stands down instead of fighting the current state.
 let run = 0;
@@ -69,12 +95,15 @@ async function start(requested?: VoiceMode): Promise<void> {
   if (requested) setMode(requested);
   phase = "starting";
   error = "";
+  setNotice("");
+  let epoch: number;
   try {
-    await voiceApi.listen({
+    const res = await voiceApi.listen({
       mode,
       wake_word: wakeWord,
       lang: getLang(),
     });
+    epoch = res.epoch;
   } catch (err) {
     if (my !== run) return;
     phase = "error";
@@ -94,10 +123,10 @@ async function start(requested?: VoiceMode): Promise<void> {
   cursor = 0;
   phase = "listening";
   chat.setOrb("listening");
-  void pollLoop(my);
+  void pollLoop(my, epoch);
 }
 
-async function pollLoop(my: number): Promise<void> {
+async function pollLoop(my: number, epoch: number): Promise<void> {
   while (my === run) {
     let batch;
     try {
@@ -113,6 +142,10 @@ async function pollLoop(my: number): Promise<void> {
     cursor = batch.next;
     for (const ev of batch.events) {
       if (my !== run) return;
+      // The queue is global across sessions: drop anything that isn't ours
+      // (a previous session's Transcript/End replayed here used to kill the
+      // new poll loop and orphan a live session → permanent 409s).
+      if (ev.epoch !== epoch) continue;
       await handle(ev);
     }
   }
@@ -120,23 +153,35 @@ async function pollLoop(my: number): Promise<void> {
 
 async function handle(ev: VoiceEvent): Promise<void> {
   switch (ev.type) {
+    case "started":
+      // Session confirmed live; we're already in listening.
+      break;
     case "capturing":
       phase = ev.active ? "capturing" : "listening";
       chat.setOrb("listening");
       break;
     case "wake":
+      // The session heard the wake word and is recording the command:
+      // say so out loud in the UI, or users talk into the void.
       phase = "capturing";
+      setNotice(t("voice.hello"));
       break;
     case "transcript":
+      setNotice("");
       await onTranscript(ev.text);
       break;
-    case "error":
+    case "error": {
+      // Server errors are terminal (the session ends server-side too), so
+      // force local cleanup first: this guarantees the next press starts
+      // fresh instead of 409ing on a stuck record.
+      const msg = t("voice.error") + (ev.message ? `: ${ev.message}` : "");
+      await stop();
       phase = "error";
-      error = t("voice.error") + (ev.message ? `: ${ev.message}` : "");
-      run++;
-      if (chat.orb === "listening") chat.setOrb("idle");
+      error = msg;
       break;
+    }
     case "end":
+      setNotice("");
       phase = "idle";
       run++;
       if (chat.orb === "listening") chat.setOrb("idle");
@@ -157,6 +202,7 @@ async function onTranscript(text: string): Promise<void> {
 
 async function stop(): Promise<void> {
   run++;
+  setNotice("");
   const wasActive =
     phase === "starting" || phase === "listening" || phase === "capturing";
   phase = "idle";
@@ -200,6 +246,9 @@ export const voice = {
   },
   get error(): string {
     return error;
+  },
+  get notice(): string {
+    return notice;
   },
   get listening(): boolean {
     return phase === "listening" || phase === "capturing";

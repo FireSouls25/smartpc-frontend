@@ -71,7 +71,9 @@
             stroke-linecap="round"
             stroke-linejoin="round"
           >
-            <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13h10l1-13" />
+            <path
+              d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13h10l1-13"
+            />
           </svg>
         </button>
       </li>

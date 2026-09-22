@@ -34,6 +34,40 @@ pub fn microphone_present() -> bool {
     cpal::default_host().default_input_device().is_some()
 }
 
+/// Human-readable input device name for diagnostics ("are we listening to
+/// the right mic?"). None when there is no input device at all.
+pub fn input_device_name() -> Option<String> {
+    cpal::default_host()
+        .default_input_device()
+        .and_then(|d| d.description().ok())
+        .map(|desc| desc.name().to_string())
+        .filter(|n| !n.trim().is_empty())
+}
+
+/// All input device names (for the settings picker). Empty when the host
+/// reports none — never an error: absence is data, not failure.
+pub fn list_input_devices() -> Vec<String> {
+    cpal::default_host()
+        .input_devices()
+        .map(|devices| {
+            devices
+                .filter_map(|d| d.description().ok())
+                .map(|desc| desc.name().to_string())
+                .filter(|n| !n.trim().is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// What the opened stream actually runs at (logged: sample-rate surprises
+/// are a classic "VAD hears nothing useful" cause).
+#[derive(Debug, Clone)]
+pub struct CaptureDesc {
+    pub rate: u32,
+    pub channels: usize,
+    pub format: String,
+}
+
 pub fn rms(frame: &[f32]) -> f32 {
     if frame.is_empty() {
         return 0.0;
@@ -70,26 +104,6 @@ fn u16_to_f32(v: u16) -> f32 {
     v as f32 / 32768.0 - 1.0
 }
 
-/// Open the default mic. Frames arrive as `Ok([f32; 480])`; stream failures
-/// arrive as `Err(message)` and the caller must shut down.
-pub fn open_capture(
-    tx: SyncSender<Result<Vec<f32>, String>>,
-) -> Result<cpal::Stream, CaptureError> {
-    let host = cpal::default_host();
-    let device = host.default_input_device().ok_or(CaptureError::NoMicrophone)?;
-    let config = device
-        .default_input_config()
-        .map_err(|e| CaptureError::Unsupported(e.to_string()))?;
-    let from_rate = config.sample_rate();
-    let channels = config.channels() as usize;
-    if channels == 0 {
-        return Err(CaptureError::Unsupported("0 channels".to_string()));
-    }
-    let stream_config: cpal::StreamConfig = config.config();
-    let err_tx = tx.clone();
-    let err_fn = move |err| {
-        let _ = err_tx.send(Err(format!("{err}")));
-    };
 /// Batches device-rate mono into 16 kHz 480-sample frames. One per stream
 /// callback closure (owned, `'static`); overflow drops, never blocks audio.
 struct Framer {
@@ -119,6 +133,48 @@ fn framer(tx: &SyncSender<Result<Vec<f32>, String>>, from_rate: u32) -> Framer {
         from_rate,
     }
 }
+
+/// Open a mic for capture. `wanted`: `None`/empty = system default,
+/// otherwise an exact device name from [`list_input_devices`].
+/// Frames arrive as `Ok([f32; 480])`; stream failures arrive as
+/// `Err(message)` and the caller must shut down.
+pub fn open_capture(
+    tx: SyncSender<Result<Vec<f32>, String>>,
+    wanted: Option<&str>,
+) -> Result<(cpal::Stream, CaptureDesc), CaptureError> {
+    let host = cpal::default_host();
+    let device = match wanted.filter(|w| !w.trim().is_empty()) {
+        Some(name) => host
+            .input_devices()
+            .map_err(|e| CaptureError::Unsupported(e.to_string()))?
+            .find(|d| {
+                d.description()
+                    .is_ok_and(|desc| desc.name() == name)
+            })
+            .ok_or_else(|| {
+                CaptureError::Unsupported(format!("input device not found: {name}"))
+            })?,
+        None => host.default_input_device().ok_or(CaptureError::NoMicrophone)?,
+    };
+    let desc = device
+        .description()
+        .ok()
+        .map(|d| d.name().to_string())
+        .unwrap_or_else(|| "?".to_string());
+    let config = device
+        .default_input_config()
+        .map_err(|e| CaptureError::Unsupported(e.to_string()))?;
+    let from_rate = config.sample_rate();
+    let channels = config.channels() as usize;
+    if channels == 0 {
+        return Err(CaptureError::Unsupported("0 channels".to_string()));
+    }
+    let stream_config: cpal::StreamConfig = config.config();
+    let format = format!("{:?}", config.sample_format());
+    let err_tx = tx.clone();
+    let err_fn = move |err| {
+        let _ = err_tx.send(Err(format!("{err}")));
+    };
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => {
             let mut framer = framer(&tx, from_rate);
@@ -167,7 +223,14 @@ fn framer(tx: &SyncSender<Result<Vec<f32>, String>>, from_rate: u32) -> Framer {
     stream
         .play()
         .map_err(|e| CaptureError::Stream(e.to_string()))?;
-    Ok(stream)
+    Ok((
+        stream,
+        CaptureDesc {
+            rate: from_rate,
+            channels,
+            format,
+        },
+    ))
 }
 
 /// Mix N channels to mono, then resample to 16 kHz. `data` is interleaved.

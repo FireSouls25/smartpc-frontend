@@ -241,6 +241,11 @@ body {
     border-color: var(--border-strong);
     transform: translateY(-1px);
   }
+  .icon-btn:disabled {
+    opacity: 0.55;
+    cursor: wait;
+    transform: none;
+  }
   .icon-btn .tip {
     position: absolute;
     top: calc(100% + 8px);

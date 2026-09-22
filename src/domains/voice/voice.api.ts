@@ -9,22 +9,30 @@ export interface VoiceStatus {
   model: string;
   wake_word: string | null;
   mic: boolean;
+  device: string | null;
+  inputs: string[];
   model_ready: boolean;
 }
 
 export type VoiceEvent =
-  | { seq: number; type: "capturing"; active: boolean }
-  | { seq: number; type: "wake"; word: string }
-  | { seq: number; type: "transcript"; text: string }
-  | { seq: number; type: "error"; code: string; message: string }
-  | { seq: number; type: "end" };
+  | { seq: number; epoch: number; type: "started" }
+  | { seq: number; epoch: number; type: "capturing"; active: boolean }
+  | { seq: number; epoch: number; type: "wake"; word: string }
+  | { seq: number; epoch: number; type: "transcript"; text: string }
+  | { seq: number; epoch: number; type: "error"; code: string; message: string }
+  | { seq: number; epoch: number; type: "end" };
 
 export const voiceApi = {
   status: () => api<VoiceStatus>("/v1/voice/status"),
 
   /** Blocks on first-use model download — generous budget. */
-  listen: (opts: { mode: VoiceMode; wake_word: string; lang: string }) =>
-    api<{ ok: boolean }>("/v1/voice/listen", {
+  listen: (opts: {
+    mode: VoiceMode;
+    wake_word: string;
+    lang: string;
+    device?: string;
+  }) =>
+    api<{ ok: boolean; epoch: number }>("/v1/voice/listen", {
       method: "POST",
       body: opts,
       timeoutMs: 180000,

@@ -36,7 +36,10 @@
 </script>
 
 <div class="flex h-full min-h-0 flex-1 flex-col gap-4">
-  <div class="card-xl flex flex-col items-center" style="padding-top: 1rem; padding-bottom: 1rem;">
+  <div
+    class="card-xl flex flex-col items-center"
+    style="padding-top: 1rem; padding-bottom: 1rem;"
+  >
     <MatrixOrb
       state={chat.orb}
       size={180}
@@ -105,6 +108,7 @@
           ? `${t("orb.listening")} (${voice.wakeWord})`
           : t("orb.listening")}
         aria-pressed={voice.listening}
+        disabled={voice.phase === "starting"}
       >
         <svg
           viewBox="0 0 24 24"
@@ -146,6 +150,14 @@
     {/if}
     {#if voice.phase === "starting"}
       <p class="faint text-xs">{t("voice.starting")}</p>
+    {/if}
+    {#if voice.notice}
+      <p class="text-xs font-semibold" style="color: var(--accent);">
+        {voice.notice}
+      </p>
+    {/if}
+    {#if voice.listening && !voice.capturing && voice.mode === "wake"}
+      <p class="faint text-xs">{t("voice.sayHey", { word: voice.wakeWord })}</p>
     {/if}
 
     <div class="flex flex-wrap items-center gap-2">

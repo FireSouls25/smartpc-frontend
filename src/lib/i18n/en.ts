@@ -31,6 +31,8 @@ export const en: Record<I18nKey, string> = {
   "voice.unsupported": "No microphone on this machine; plug one in to talk.",
   "voice.error": "Voice recognition failed; try again.",
   "voice.starting": "Starting local voice…",
+  "voice.hello": "I'm listening, go ahead!",
+  "voice.sayHey": "Say “{word}” to start",
   "voice.busy": "The assistant is busy; your words are kept in the input.",
   "voice.downloading": "Downloading the voice model (first time only)…",
   "voice.mode": "Mode",

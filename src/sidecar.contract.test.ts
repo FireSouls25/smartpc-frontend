@@ -165,6 +165,9 @@ describe("sidecar contract", () => {
       body["wake_word"] === null || typeof body["wake_word"] === "string",
     ).toBe(true);
     expect(typeof body["mic"]).toBe("boolean");
+    expect(body["device"] === null || typeof body["device"] === "string").toBe(
+      true,
+    );
     expect(typeof body["model_ready"]).toBe("boolean");
   });
 
@@ -177,5 +180,50 @@ describe("sidecar contract", () => {
     expect(bad.status).toBe(400);
     const body = (await bad.json()) as { error: { code: string } };
     expect(body.error.code).toBe("invalid_mode");
+    // Failed validation never claims a record: no stuck session possible.
+    const st = (await (
+      await fetch(`${BASE}/v1/voice/status`, { headers: gate })
+    ).json()) as { listening: boolean };
+    expect(st.listening).toBe(false);
+    // Stop is idempotent, session or not.
+    const stop = await fetch(`${BASE}/v1/voice/stop`, {
+      method: "POST",
+      headers: gate,
+    });
+    expect(stop.ok).toBe(true);
+  });
+
+  test("voice listen hands out epochs (or fails clean without mic)", async () => {
+    const res = await fetch(`${BASE}/v1/voice/listen`, {
+      method: "POST",
+      headers: gate,
+      body: JSON.stringify({ mode: "manual", lang: "en" }),
+    });
+    const body = (await res.json()) as
+      { ok: boolean; epoch: number } | { error: { code: string } };
+    if ("error" in body) {
+      // Headless CI has no microphone: must fail closed, record-free.
+      expect(res.status).toBe(503);
+      expect(body.error.code).toBe("no_microphone");
+    } else {
+      expect(res.ok).toBe(true);
+      expect(typeof body.epoch).toBe("number");
+      // A live session announces itself first: the started event carries
+      // the epoch, and the cleared queue holds no replayed history.
+      const polled = (await (
+        await fetch(`${BASE}/v1/voice/events?cursor=0`, {
+          headers: gate,
+          signal: AbortSignal.timeout(15000),
+        })
+      ).json()) as { events: { type: string; epoch: number }[] };
+      expect(polled.events.length).toBeGreaterThan(0);
+      expect(polled.events[0].type).toBe("started");
+      for (const ev of polled.events) expect(ev.epoch).toBe(body.epoch);
+      await fetch(`${BASE}/v1/voice/stop`, { method: "POST", headers: gate });
+      const st = (await (
+        await fetch(`${BASE}/v1/voice/status`, { headers: gate })
+      ).json()) as { listening: boolean };
+      expect(st.listening).toBe(false);
+    }
   });
 });

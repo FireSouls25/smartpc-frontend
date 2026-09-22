@@ -203,7 +203,8 @@
       for (const st of STATES) {
         weights[st] += ((st === current ? 1 : 0) - weights[st]) * step;
       }
-      velocity += (-STIFFNESS * (scale - SCALE[current]) - DAMPING * velocity) * dt;
+      velocity +=
+        (-STIFFNESS * (scale - SCALE[current]) - DAMPING * velocity) * dt;
       scale += velocity * dt;
       draw(t, amplitude, scale);
       raf = requestAnimationFrame(frame);

@@ -32,6 +32,8 @@ export function setLang(lang: Lang): void {
   document.documentElement.lang = lang;
 }
 
-export function t(key: I18nKey): string {
-  return dicts[current][key] ?? key;
+export function t(key: I18nKey, vars?: Record<string, string>): string {
+  const template: string = dicts[current][key] ?? key;
+  if (!vars) return template;
+  return template.replace(/\{(\w+)\}/g, (m, name: string) => vars[name] ?? m);
 }

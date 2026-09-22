@@ -25,7 +25,7 @@ use super::audio::{self, TARGET_RATE};
 use super::vad::{FRAME_SAMPLES, Vad, VadConfig, VadTransition};
 use super::engine::Engine;
 use super::model;
-use super::wake::contains_wake_word;
+use super::wake::split_wake_command;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListenMode {
@@ -56,6 +56,7 @@ pub struct ListenOpts {
     pub wake_word: String,
     pub lang: String,
     pub model: String,
+    pub device: Option<String>,
 }
 
 #[derive(Debug)]
@@ -65,6 +66,7 @@ pub enum StartError {
     BadMode,
     BadWakeWord,
     BadLang,
+    BadDevice,
     ModelFailed(String),
     CaptureFailed(String),
 }
@@ -97,6 +99,11 @@ impl StartError {
                 "invalid_lang",
                 "lang must be a 2-letter code (es, en, …)".to_string(),
             ),
+            Self::BadDevice => (
+                400,
+                "invalid_device",
+                "unknown input device (see voice status for names)".to_string(),
+            ),
             Self::ModelFailed(e) => (502, "model_failed", e.clone()),
             Self::CaptureFailed(e) => (500, "capture_failed", e.clone()),
         }
@@ -109,6 +116,7 @@ pub fn parse_opts(
     wake_word: Option<&str>,
     lang: Option<&str>,
     model: Option<&str>,
+    device: Option<&str>,
 ) -> Result<ListenOpts, StartError> {
     let mode = ListenMode::parse(mode.unwrap_or("manual")).ok_or(StartError::BadMode)?;
     let wake_word = wake_word.unwrap_or("hey").trim().to_string();
@@ -119,17 +127,26 @@ pub fn parse_opts(
     if lang.len() != 2 || !lang.chars().all(|c| c.is_ascii_lowercase()) {
         return Err(StartError::BadLang);
     }
+    let device = match device.map(|d| d.trim().to_string()) {
+        None => None,
+        Some(d) if d.is_empty() => None,
+        Some(d) if d.chars().count() <= 128 => Some(d),
+        Some(_) => return Err(StartError::BadDevice),
+    };
     Ok(ListenOpts {
         mode,
         wake_word,
         lang,
         model: model::model_name_or_default(model),
+        device,
     })
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum VoiceEvent {
+    /// Fresh session is live and the mic is open (first event, epoch-tagged).
+    Started {},
     Capturing { active: bool },
     Wake { word: String },
     Transcript { text: String },
@@ -140,6 +157,7 @@ pub enum VoiceEvent {
 #[derive(Debug, Clone)]
 struct StoredEvent {
     seq: u64,
+    epoch: u64,
     event: VoiceEvent,
 }
 
@@ -148,12 +166,14 @@ struct SessionHandle {
     capturing: Arc<AtomicBool>,
     mode: ListenMode,
     wake_word: String,
+    epoch: u64,
 }
 
 struct Inner {
     session: Option<SessionHandle>,
     events: VecDeque<StoredEvent>,
     next_seq: u64,
+    next_epoch: u64,
 }
 
 #[derive(Clone)]
@@ -170,17 +190,18 @@ impl VoiceService {
                 session: None,
                 events: VecDeque::with_capacity(64),
                 next_seq: 1,
+                next_epoch: 1,
             })),
             notify: Arc::new(Notify::new()),
             models_dir,
         }
     }
 
-    fn push_event(&self, event: VoiceEvent) {
+    fn push_event(&self, epoch: u64, event: VoiceEvent) {
         if let Ok(mut inner) = self.inner.lock() {
             let seq = inner.next_seq;
             inner.next_seq += 1;
-            inner.events.push_back(StoredEvent { seq, event });
+            inner.events.push_back(StoredEvent { seq, epoch, event });
             while inner.events.len() > 200 {
                 inner.events.pop_front();
             }
@@ -210,16 +231,20 @@ impl VoiceService {
             "model": model,
             "wake_word": wake_word,
             "mic": audio::microphone_present(),
+            "device": audio::input_device_name(),
+            "inputs": audio::list_input_devices(),
             "model_ready": model::model_ready(&self.models_dir, &model),
         })
     }
 
     /// Start listening. Blocks (call from `spawn_blocking`): model download
     /// first, then mic open, then the listener thread owns the rest.
-    pub fn start(&self, opts: ListenOpts) -> Result<(), StartError> {
+    /// Returns the session epoch: every event carries it, so clients drop
+    /// other sessions' stale events instead of acting on them.
+    pub fn start(&self, opts: ListenOpts) -> Result<u64, StartError> {
         let stop = Arc::new(AtomicBool::new(false));
         let capturing = Arc::new(AtomicBool::new(false));
-        {
+        let epoch = {
             let mut inner = self.inner.lock().map_err(|_| {
                 StartError::CaptureFailed("voice state poisoned".to_string())
             })?;
@@ -228,13 +253,22 @@ impl VoiceService {
             }
             // Claimed before any blocking work: a second start() fails fast
             // instead of stacking downloads/threads.
+            let epoch = inner.next_epoch;
+            inner.next_epoch += 1;
             inner.session = Some(SessionHandle {
                 stop: stop.clone(),
                 capturing: capturing.clone(),
                 mode: opts.mode,
                 wake_word: opts.wake_word.clone(),
+                epoch,
             });
-        }
+            // Fresh session, fresh queue: a new poller starting at cursor 0
+            // must never replay the previous session's Transcript/End (a
+            // stale End would instantly kill the new poll loop, orphaning a
+            // live session that then 409s every later listen).
+            inner.events.clear();
+            epoch
+        };
         if !audio::microphone_present() {
             self.clear_session();
             return Err(StartError::NoMicrophone);
@@ -262,16 +296,16 @@ impl VoiceService {
         if std::thread::Builder::new()
             .name("smartpc-voice".to_string())
             .spawn(move || {
-                run_listener(service, thread_stop, thread_capturing, opts, engine);
+                run_listener(service, thread_stop, thread_capturing, opts, epoch, engine);
             })
             .is_err()
         {
             self.clear_session();
             return Err(StartError::CaptureFailed("voice thread failed".to_string()));
         }
-        // Detached: the thread clears the session itself on exit
-        // (auto-stop, error, or stop flag).
-        Ok(())
+        // Detached: the thread clears its own record on exit (epoch-guarded,
+        // so a slow death can never wipe a newer session).
+        Ok(epoch)
     }
 
     fn clear_session(&self) {
@@ -280,10 +314,12 @@ impl VoiceService {
         }
     }
 
-    /// Ask the listener to stop. Idempotent; the thread pushes `End`.
+    /// Stop listening. Takes the record immediately (recovery always works,
+    /// even if the thread already died) and flags the thread; the thread
+    /// itself emits the single `End` on exit. Idempotent.
     pub fn stop(&self) {
         let stop = match self.inner.lock() {
-            Ok(inner) => inner.session.as_ref().map(|s| s.stop.clone()),
+            Ok(mut inner) => inner.session.take().map(|s| s.stop),
             Err(_) => None,
         };
         if let Some(flag) = stop {
@@ -305,6 +341,7 @@ impl VoiceService {
                             let mut v = serde_json::to_value(&stored.event)
                                 .unwrap_or(serde_json::Value::Null);
                             v["seq"] = serde_json::Value::from(stored.seq);
+                            v["epoch"] = serde_json::Value::from(stored.epoch);
                             out.push(v);
                             next = stored.seq;
                         }
@@ -342,10 +379,97 @@ where
         .block_on(fut)
 }
 
+/// Truncated transcript preview for diagnostics (local log only, the user
+/// copies it voluntarily when reporting issues).
+fn preview(text: &str) -> String {
+    const MAX: usize = 80;
+    let flat: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= MAX {
+        return format!("'{flat}'");
+    }
+    let cut: String = flat.chars().take(MAX).collect();
+    format!("'{cut}…'")
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Arm {
     AwaitingWake,
     AwaitingCommand,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_opts_defaults() {
+        let o = parse_opts(None, None, None, None, None).unwrap();
+        assert_eq!(o.mode, ListenMode::Manual);
+        assert_eq!(o.wake_word, "hey");
+        assert_eq!(o.lang, "es");
+        assert_eq!(o.model, model::DEFAULT_MODEL);
+        assert_eq!(o.device, None);
+    }
+
+    #[test]
+    fn parse_opts_rejects_garbage() {
+        assert!(matches!(
+            parse_opts(Some("shout"), None, None, None, None),
+            Err(StartError::BadMode)
+        ));
+        assert!(matches!(
+            parse_opts(Some("wake"), Some(""), None, None, None),
+            Err(StartError::BadWakeWord)
+        ));
+        assert!(matches!(
+            parse_opts(Some("wake"), Some("hey"), Some("espanol"), None, None),
+            Err(StartError::BadLang)
+        ));
+        assert!(matches!(
+            parse_opts(Some("wake"), Some("hey"), Some("EN"), None, None),
+            Ok(_)
+        ));
+        assert!(matches!(
+            parse_opts(Some("manual"), None, None, None, Some("Mic")),
+            Ok(_)
+        ));
+        assert_eq!(
+            parse_opts(Some("manual"), None, None, None, Some("   "))
+                .unwrap()
+                .device,
+            None
+        );
+        assert!(matches!(
+            parse_opts(Some("manual"), None, None, None, Some(&"x".repeat(200))),
+            Err(StartError::BadDevice)
+        ));
+    }
+
+    #[test]
+    fn stop_without_session_is_a_noop() {
+        let svc = VoiceService::new(std::env::temp_dir());
+        svc.stop();
+        svc.stop();
+        let st = svc.status();
+        assert_eq!(st["listening"], false);
+    }
+
+    #[test]
+    fn already_listening_error_shape() {
+        let (code, status, _) = StartError::AlreadyListening.http_parts();
+        assert_eq!(code, 409);
+        assert_eq!(status, "already_listening");
+    }
+
+    #[test]
+    fn preview_truncates_long_transcripts() {
+        assert_eq!(super::preview("hola mundo"), "'hola mundo'");
+        assert_eq!(super::preview("  a  b  "), "'a b'");
+        let long = "word ".repeat(30);
+        let p = super::preview(&long);
+        assert!(p.ends_with("…'"));
+        assert!(p.chars().count() <= 84);
+    }
 }
 
 fn run_listener(
@@ -353,14 +477,33 @@ fn run_listener(
     stop: Arc<AtomicBool>,
     capturing: Arc<AtomicBool>,
     opts: ListenOpts,
+    epoch: u64,
     engine: Engine,
 ) {
-    let liga = Listener::new(service.clone(), stop, capturing, opts, engine);
-    liga.run();
-    // Session record cleared here (auto-stop, error, or stop flag) so a new
-    // listen() can start; the End event is already queued.
+    // A panicking listener must never poison future sessions: catch it,
+    // report it, release the record (epoch-guarded like every other exit).
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        Listener::new(service.clone(), stop, capturing, opts, epoch, engine).run();
+    }));
+    if let Err(_) = result {
+        service.push_event(
+            epoch,
+            VoiceEvent::Error {
+                code: "voice_crash".to_string(),
+                message: "voice worker failed unexpectedly".to_string(),
+            },
+        );
+        crate::diagnostics::push("voice: listener thread panicked".to_string());
+    }
+    service.push_event(epoch, VoiceEvent::End {});
     if let Ok(mut inner) = service.inner.lock() {
-        inner.session = None;
+        let ours = inner
+            .session
+            .as_ref()
+            .is_some_and(|s| s.epoch == epoch);
+        if ours {
+            inner.session = None;
+        }
     }
     service.notify.notify_one();
 }
@@ -370,6 +513,7 @@ struct Listener {
     stop: Arc<AtomicBool>,
     capturing_flag: Arc<AtomicBool>,
     opts: ListenOpts,
+    epoch: u64,
     engine: Engine,
     vad: Vad,
     preroll: VecDeque<f32>,
@@ -377,6 +521,10 @@ struct Listener {
     capturing: bool,
     arm: Arm,
     max_utter_samples: usize,
+    // Observability for "nothing arrives" reports: frame flow + level floor.
+    frames_seen: u64,
+    max_rms: f32,
+    captures: u64,
 }
 
 impl Listener {
@@ -385,6 +533,7 @@ impl Listener {
         stop: Arc<AtomicBool>,
         capturing_flag: Arc<AtomicBool>,
         opts: ListenOpts,
+        epoch: u64,
         engine: Engine,
     ) -> Self {
         let max_s: u64 = std::env::var("VOICE_MAX_UTTERANCE_S")
@@ -396,6 +545,7 @@ impl Listener {
             stop,
             capturing_flag,
             opts,
+            epoch,
             engine,
             vad: Vad::new(VadConfig::from_env()),
             preroll: VecDeque::with_capacity(FRAME_SAMPLES * 10),
@@ -403,11 +553,14 @@ impl Listener {
             capturing: false,
             arm: Arm::AwaitingWake,
             max_utter_samples: (max_s.max(5) as usize) * TARGET_RATE as usize,
+            frames_seen: 0,
+            max_rms: 0.0,
+            captures: 0,
         }
     }
 
     fn emit(&self, event: VoiceEvent) {
-        self.service.push_event(event);
+        self.service.push_event(self.epoch, event);
     }
 
     fn set_capturing(&mut self, on: bool) {
@@ -422,7 +575,10 @@ impl Listener {
 
     fn run(mut self) {
         let (tx, rx) = std::sync::mpsc::sync_channel::<Result<Vec<f32>, String>>(128);
-        let _stream = match audio::open_capture(tx.clone()) {
+        let (_stream, desc) = match audio::open_capture(
+            tx.clone(),
+            self.opts.device.as_deref(),
+        ) {
             Ok(s) => s,
             Err(e) => {
                 let (code, message) = match &e {
@@ -437,15 +593,23 @@ impl Listener {
                     code: code.to_string(),
                     message: message.to_string(),
                 });
-                self.emit(VoiceEvent::End {});
+                // The tail emits End + releases the record (epoch-guarded).
                 return;
             }
         };
         crate::diagnostics::push(format!(
-            "voice: listening (mode={}, lang={})",
+            "voice: listening (mode={}, lang={}, dev={}, {}ch@{}Hz {:?}, vad thr={} sil_ms={} min_ms={})",
             self.opts.mode.as_str(),
-            self.opts.lang
+            self.opts.lang,
+            audio::input_device_name().unwrap_or_else(|| "?".to_string()),
+            desc.channels,
+            desc.rate,
+            desc.format,
+            self.vad.threshold(),
+            self.vad.silence_ms(),
+            self.vad.min_speech_ms(),
         ));
+        self.emit(VoiceEvent::Started {});
         while !self.stopped() {
             match rx.recv_timeout(Duration::from_millis(200)) {
                 Ok(Ok(frame)) => self.on_frame(&frame),
@@ -460,10 +624,39 @@ impl Listener {
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
             }
         }
-        self.emit(VoiceEvent::End {});
+        // Session summary: distinguishes "mic silent/wrong" (frames flowed,
+        // nothing captured) from "stream stalled" (no frames at all).
+        if self.captures == 0 && self.frames_seen > 0 {
+            crate::diagnostics::push(format!(
+                "voice: session ended, no speech captured ({} frames, max rms {:.4})",
+                self.frames_seen, self.max_rms
+            ));
+        } else if self.frames_seen == 0 {
+            crate::diagnostics::push(
+                "voice: session ended, NO AUDIO FRAMES arrived (stream stalled?)".to_string(),
+            );
+        }
+        // Single End for every exit path lives in run_listener's tail.
     }
 
     fn on_frame(&mut self, frame: &[f32]) {
+        // Level tracing: the first frame proves audio flows at all; the
+        // periodic floor shows whether the mic hears the room or digital
+        // silence (wrong device / muted at OS level).
+        let rms = audio::rms(frame);
+        self.frames_seen += 1;
+        self.max_rms = self.max_rms.max(rms);
+        if self.frames_seen == 1 {
+            crate::diagnostics::push(format!(
+                "voice: audio flowing, first frame rms={rms:.4}"
+            ));
+        } else if !self.capturing && self.frames_seen % 500 == 0 {
+            crate::diagnostics::push(format!(
+                "voice: idle level rms={:.4} (max {:.4} over {} frames, no speech)",
+                rms, self.max_rms, self.frames_seen
+            ));
+            self.max_rms = 0.0;
+        }
         // Pre-roll always runs so SpeechStart loses nothing (~300 ms ring).
         if !self.capturing {
             self.preroll.extend(frame.iter().copied());
@@ -471,13 +664,15 @@ impl Listener {
                 self.preroll.pop_front();
             }
         }
-        match self.vad.feed(audio::rms(frame)) {
+        match self.vad.feed(rms) {
             VadTransition::Silence => {}
             VadTransition::SpeechStart => {
                 self.utter.clear();
                 self.utter.extend(self.preroll.drain(..));
                 self.utter.extend_from_slice(frame);
                 self.set_capturing(true);
+                self.captures += 1;
+                crate::diagnostics::push("voice: speech detected, capturing…".to_string());
             }
             VadTransition::SpeechOngoing => {
                 if self.capturing {
@@ -506,6 +701,12 @@ impl Listener {
         if self.stopped() {
             return;
         }
+        // Stage tracing (all local, user-copied): each line narrows a
+        // "nothing arrives" report to VAD vs transcription vs matching.
+        crate::diagnostics::push(format!(
+            "voice: transcribing {} samples…",
+            pcm.len()
+        ));
         let text = match self.engine.transcribe(&pcm, &self.opts.lang) {
             Ok(t) => t,
             Err(e) => {
@@ -514,34 +715,59 @@ impl Listener {
                     code: "transcribe_failed".to_string(),
                     message: e,
                 });
+                // Terminal: a broken engine won't heal mid-session. The tail
+                // emits End and releases the record so the next press works.
+                self.stop.store(true, Ordering::Relaxed);
                 return;
             }
         };
         if text.is_empty() {
             // Breath, chair, fan: the VAD fired on nothing linguistic.
+            crate::diagnostics::push(
+                "voice: transcript empty (noise, not speech?)".to_string(),
+            );
             return;
         }
+        crate::diagnostics::push(format!("voice: heard {}", preview(&text)));
         match self.opts.mode {
             ListenMode::Manual => {
                 self.emit(VoiceEvent::Transcript { text });
                 // Single utterance per press: the frontend sends it and the
                 // session is done. Nobody presses anything to finish.
-                self.emit(VoiceEvent::End {});
                 self.stop.store(true, Ordering::Relaxed);
             }
             ListenMode::Wake => match self.arm {
                 Arm::AwaitingWake => {
-                    if contains_wake_word(&text, &self.opts.wake_word) {
-                        crate::diagnostics::push(format!(
-                            "voice: wake word heard ({})",
-                            self.opts.wake_word
-                        ));
-                        self.emit(VoiceEvent::Wake {
-                            word: self.opts.wake_word.clone(),
-                        });
-                        self.arm = Arm::AwaitingCommand;
+                    match split_wake_command(&text, &self.opts.wake_word) {
+                        None => {
+                            // Background chatter, re-arm silently (but trace:
+                            // a perpetually-missing wake word is the #1
+                            // support question).
+                            crate::diagnostics::push(format!(
+                                "voice: no wake word in onset, re-arming ({})",
+                                preview(&text)
+                            ));
+                        }
+                        Some(remainder) => {
+                            crate::diagnostics::push(format!(
+                                "voice: wake word heard ({})",
+                                self.opts.wake_word
+                            ));
+                            self.emit(VoiceEvent::Wake {
+                                word: self.opts.wake_word.clone(),
+                            });
+                            if remainder.trim().is_empty() {
+                                // Bare "hey" (pause): the command comes next.
+                                self.arm = Arm::AwaitingCommand;
+                            } else {
+                                // One breath ("hey, do X"): send it now and
+                                // stay armed for the next one.
+                                self.emit(VoiceEvent::Transcript {
+                                    text: remainder,
+                                });
+                            }
+                        }
                     }
-                    // Else: background chatter, re-arm silently.
                 }
                 Arm::AwaitingCommand => {
                     self.emit(VoiceEvent::Transcript { text });

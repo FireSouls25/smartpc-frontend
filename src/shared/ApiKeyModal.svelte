@@ -24,7 +24,7 @@
   }
 </script>
 
-<svelte:window onkeydown={onkeydown} />
+<svelte:window {onkeydown} />
 
 {#if modal()}
   {@const m = modal()!}
@@ -81,7 +81,11 @@
           >
             {t("aikey.cancel")}
           </button>
-          <button type="submit" class="btn btn-primary" disabled={providers.keyBusy}>
+          <button
+            type="submit"
+            class="btn btn-primary"
+            disabled={providers.keyBusy}
+          >
             {providers.keyBusy ? t("common.loading") : t("aikey.save")}
           </button>
         </div>

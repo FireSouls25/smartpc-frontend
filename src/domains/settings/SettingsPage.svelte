@@ -2,22 +2,35 @@
   import BounceSidebar from "../../components/ui/bounce-sidebar.svelte";
   import { auth } from "../auth/auth.store.svelte";
   import { navigate } from "../../app/router.svelte";
-  import { t, getLang, setLang, type Lang, type I18nKey } from "../../lib/i18n.svelte";
+  import {
+    t,
+    getLang,
+    setLang,
+    type Lang,
+    type I18nKey,
+  } from "../../lib/i18n.svelte";
   import { getTheme, setTheme, type Theme } from "../../lib/theme.svelte";
   import { providerStore as providers } from "../assistant/providers.store.svelte";
   import ProviderStart from "../assistant/ProviderStart.svelte";
   import { voice, DEFAULT_WAKE_WORD } from "../voice/voice.store.svelte";
-  import { voiceApi, type VoiceMode, type VoiceStatus } from "../voice/voice.api";
+  import {
+    voiceApi,
+    type VoiceMode,
+    type VoiceStatus,
+  } from "../voice/voice.api";
   import SelectMenu from "../../shared/SelectMenu.svelte";
   import { api } from "../../lib/api";
 
-  let { onBack, initialSection = 0 }: { onBack: () => void; initialSection?: number } =
-    $props();
+  let {
+    onBack,
+    initialSection = 0,
+  }: { onBack: () => void; initialSection?: number } = $props();
 
   // Gestures were cut here on purpose (P2 #13): the toggle switched state
   // with no detection pipeline behind it. It returns with the pipeline.
   const sections = ["general", "ai", "voice", "account"] as const;
-  const clamp = (n: number): number => Math.min(sections.length - 1, Math.max(0, n));
+  const clamp = (n: number): number =>
+    Math.min(sections.length - 1, Math.max(0, n));
   // Local state synced FROM the route (Back button, deep links); writes go
   // through selectSection which replaces the hash.
   let section = $state(0);
@@ -138,7 +151,7 @@
           <div>
             <p class="label">{t("common.theme")}</p>
             <div class="flex flex-wrap gap-2">
-              {#each (["auto", "light", "dark"] as Theme[]) as v (v)}
+              {#each ["auto", "light", "dark"] as Theme[] as v (v)}
                 <button
                   class="chip"
                   style={getTheme() === v
@@ -159,7 +172,7 @@
           <div>
             <p class="label">Language / Idioma</p>
             <div class="flex flex-wrap gap-2">
-              {#each (["es", "en"] as Lang[]) as v (v)}
+              {#each ["es", "en"] as Lang[] as v (v)}
                 <button
                   class="chip"
                   style={getLang() === v
@@ -199,7 +212,9 @@
             <SelectMenu
               label={t("chat.model")}
               value={providers.activeModel}
-              options={providers.activeModels().map((m) => ({ value: m, label: m }))}
+              options={providers
+                .activeModels()
+                .map((m) => ({ value: m, label: m }))}
               onChange={(v) => void providers.selectModel(v)}
             />
           </div>
@@ -250,14 +265,18 @@
             </div>
             <pre
               class="font-mono text-xs whitespace-pre-wrap break-all"
-              style="max-height: 16rem; overflow: auto; border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.5rem 0.75rem; background: var(--card);"
-              >{diagLines.length > 0 ? diagLines.join("\n") : t("settings.diagEmpty")}</pre
-            >
+              style="max-height: 16rem; overflow: auto; border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.5rem 0.75rem; background: var(--card);">{diagLines.length >
+              0
+                ? diagLines.join("\n")
+                : t("settings.diagEmpty")}</pre>
           </div>
         </div>
       {:else if section === 2}
         <div class="flex flex-col gap-4">
           <p class="muted text-sm">{t("voice.localNote")}</p>
+          {#if voiceStatus?.device}
+            <p class="faint text-xs">{voiceStatus.device}</p>
+          {/if}
           <div class="flex flex-wrap gap-2">
             <span class="chip">
               <span
@@ -285,7 +304,7 @@
           <div>
             <p class="label">{t("voice.mode")}</p>
             <div class="flex flex-wrap gap-2">
-              {#each (["manual", "wake"] as VoiceMode[]) as v (v)}
+              {#each ["manual", "wake"] as VoiceMode[] as v (v)}
                 <button
                   class="chip"
                   style={voice.mode === v
