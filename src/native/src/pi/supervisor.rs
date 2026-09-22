@@ -104,7 +104,8 @@ impl PiSupervisor {
 
     /// Resolve the pi executable: `PI_BIN` override, else npx-pinned package.
     /// Returns (bin, leading_args) so spawn appends pi flags after.
-    fn pi_command() -> (String, Vec<String>) {
+    /// Shared by the agent supervisor and the TTS manager.
+    pub(crate) fn pi_command() -> (String, Vec<String>) {
         match std::env::var("PI_BIN").ok().filter(|v| !v.trim().is_empty()) {
             Some(bin) => (bin, Vec::new()),
             None => (

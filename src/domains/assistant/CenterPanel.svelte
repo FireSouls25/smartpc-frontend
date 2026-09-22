@@ -29,6 +29,8 @@
 
   function submit(e: SubmitEvent) {
     e.preventDefault();
+    // Barge-in: newly typed input wins over in-flight speech.
+    void voice.stopSpeaking();
     void chat.send(chat.draft);
   }
 
@@ -155,6 +157,15 @@
       <p class="text-xs font-semibold" style="color: var(--accent);">
         {voice.notice}
       </p>
+    {/if}
+    {#if voice.speaking}
+      <button
+        type="button"
+        class="faint text-xs underline"
+        onclick={() => void voice.stopSpeaking()}
+      >
+        {t("voice.speaking")} ✕
+      </button>
     {/if}
     {#if voice.listening && !voice.capturing && voice.mode === "wake"}
       <p class="faint text-xs">{t("voice.sayHey", { word: voice.wakeWord })}</p>

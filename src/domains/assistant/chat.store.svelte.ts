@@ -7,6 +7,7 @@ import { ApiError } from "../../lib/api";
 import { getLang, t, type I18nKey } from "../../lib/i18n.svelte";
 import { sessionStore } from "./sessions.store.svelte";
 import { providerStore } from "./providers.store.svelte";
+import { SvelteSet } from "svelte/reactivity";
 
 export type OrbState = "idle" | "listening" | "thinking";
 
@@ -35,6 +36,34 @@ let messages = $state<ChatMsg[]>(greeting());
 let events = $state<AppEvent[]>([]);
 let contextUsed = $state(0);
 let draft = $state("");
+
+type ReplyListener = (id: string | undefined, text: string | undefined) => void;
+const replyListeners = new SvelteSet<ReplyListener>();
+
+/**
+ * Subscribe to fresh assistant replies (SEND path only — history loads
+ * never fire). Lets the voice store auto-speak without importing it here
+ * (which would cycle the module graph).
+ */
+export function onAssistantReply(cb: ReplyListener): () => void {
+  replyListeners.add(cb);
+  return () => {
+    replyListeners.delete(cb);
+  };
+}
+
+function notifyReply(): void {
+  if (replyListeners.size === 0) return;
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== "assistant" || last.textKey) return;
+  for (const cb of replyListeners) {
+    try {
+      cb(last.id, last.text);
+    } catch {
+      /* listener-local failure */
+    }
+  }
+}
 
 /** Voice sessions drive the orb while capturing (see voice store). */
 function setOrb(next: OrbState): void {
@@ -137,6 +166,7 @@ async function send(text: string): Promise<boolean> {
     // The turn above ran under the active combo, so the viewed session now
     // continues under it too — the adopt affordance has served its purpose.
     sessionStore.clearCombo();
+    notifyReply();
   } catch (err) {
     const msg =
       err instanceof ApiError && err.code === "timeout"

@@ -33,6 +33,9 @@ export const es = {
   "voice.starting": "Iniciando voz local…",
   "voice.hello": "¡Te escucho, dime!",
   "voice.sayHey": "Di «{word}» para empezar",
+  "voice.speak": "Leer respuestas en voz alta",
+  "voice.speaking": "Hablando…",
+  "voice.speakHint": "Usa la voz del sistema. La primera vez descarga ~21 MB.",
   "voice.busy":
     "El asistente está ocupado; tu texto quedó en el campo de entrada.",
   "voice.downloading": "Descargando el modelo de voz (solo la primera vez)…",

@@ -352,6 +352,19 @@
             />
             <p class="faint mt-1 text-xs">{t("voice.wakeHint")}</p>
           </div>
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <p class="text-sm font-bold">{t("voice.speak")}</p>
+              <p class="muted mt-0.5 text-xs">{t("voice.speakHint")}</p>
+            </div>
+            <button
+              class="switch"
+              role="switch"
+              aria-checked={voice.speakEnabled}
+              aria-label={t("voice.speak")}
+              onclick={() => voice.setSpeakEnabled(!voice.speakEnabled)}
+            ></button>
+          </div>
         </div>
       {:else}
         <div class="flex flex-col gap-3">

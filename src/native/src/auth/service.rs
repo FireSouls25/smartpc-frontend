@@ -239,6 +239,10 @@ mod tests {
             voice: crate::stt::VoiceService::new(
                 std::env::temp_dir().join("smartpc-test-models"),
             ),
+            tts: crate::tts::TtsManager::new(
+                std::env::temp_dir(),
+                std::env::temp_dir().join("voice.ts"),
+            ),
             pi: crate::pi::PiSupervisor::new(crate::pi::supervisor::PiConfig {
                 bridge_path: std::path::PathBuf::from("pi-bridge/smartpc.ts"),
                 data_dir: std::env::temp_dir(),

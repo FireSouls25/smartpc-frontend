@@ -230,4 +230,25 @@ describe("sidecar contract", () => {
       expect(st.listening).toBe(false);
     }
   });
+
+  test("voice speak validates without side effects", async () => {
+    const empty = await fetch(`${BASE}/v1/voice/speak`, {
+      method: "POST",
+      headers: gate,
+      body: JSON.stringify({ text: "   " }),
+    });
+    expect(empty.status).toBe(400);
+    const long = await fetch(`${BASE}/v1/voice/speak`, {
+      method: "POST",
+      headers: gate,
+      body: JSON.stringify({ text: "x".repeat(2001) }),
+    });
+    expect(long.status).toBe(400);
+    // Stop is idempotent, speaking or not.
+    const stop = await fetch(`${BASE}/v1/voice/speak-stop`, {
+      method: "POST",
+      headers: gate,
+    });
+    expect(stop.ok).toBe(true);
+  });
 });

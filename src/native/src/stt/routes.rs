@@ -80,3 +80,70 @@ pub async fn events(
     let (events, next) = s.voice.poll(q.cursor.unwrap_or(0)).await;
     Json(serde_json::json!({ "events": events, "next": next }))
 }
+
+#[derive(Debug, Deserialize)]
+pub struct SpeakBody {
+    pub text: Option<String>,
+    pub lang: Option<String>,
+}
+
+/// Speak text aloud through the pi-listen engine (fire-and-forget: returns
+/// once the utterance is accepted, NOT when audio finishes — extension
+/// commands emit no completion events; a watchdog reaps the player).
+pub async fn speak(
+    State(s): State<AppState>,
+    Json(b): Json<SpeakBody>,
+) -> impl IntoResponse {
+    let text = b.text.unwrap_or_default();
+    if text.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": { "code": "validation", "message": "text must not be empty", "field": "text" }
+            })),
+        )
+            .into_response();
+    }
+    if text.chars().count() > crate::tts::MAX_CHARS {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": { "code": "validation", "message": "text too long for speech", "field": "text" }
+            })),
+        )
+            .into_response();
+    }
+    let lang = b
+        .lang
+        .as_deref()
+        .filter(|l| !l.trim().is_empty())
+        .unwrap_or("es");
+    match s.tts.speak(&text, lang).await {
+        Ok(estimated_ms) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "ok": true, "estimated_ms": estimated_ms })),
+        )
+            .into_response(),
+        Err(e) => {
+            let (status, code) = match &e {
+                crate::tts::TtsError::Misconfigured(_) => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, "misconfigured")
+                }
+                crate::tts::TtsError::Failed(_) => {
+                    (StatusCode::BAD_GATEWAY, "tts_failed")
+                }
+            };
+            (
+                status,
+                Json(serde_json::json!({ "error": { "code": code, "message": e.message() } })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Cut active speech immediately. Always ok (idempotent).
+pub async fn speak_stop(State(s): State<AppState>) -> impl IntoResponse {
+    s.tts.stop();
+    Json(serde_json::json!({ "ok": true }))
+}

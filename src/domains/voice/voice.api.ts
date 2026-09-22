@@ -50,4 +50,18 @@ export const voiceApi = {
       `/v1/voice/events?cursor=${cursor}`,
       { timeoutMs: 35000 },
     ),
+
+  /** Speak text aloud (fire-and-forget server-side with a watchdog). */
+  speak: (text: string, lang: string) =>
+    api<{ ok: boolean; estimated_ms: number }>("/v1/voice/speak", {
+      method: "POST",
+      body: { text, lang },
+      timeoutMs: 30000,
+    }),
+
+  stopSpeaking: () =>
+    api<{ ok: boolean }>("/v1/voice/speak-stop", {
+      method: "POST",
+      timeoutMs: 10000,
+    }),
 };

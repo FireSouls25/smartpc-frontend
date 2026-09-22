@@ -4,7 +4,10 @@
 // user messages and run through the agent like typed text).
 import { voiceApi, type VoiceEvent, type VoiceMode } from "./voice.api";
 import { ApiError } from "../../lib/api";
-import { chatStore as chat } from "../assistant/chat.store.svelte";
+import {
+  chatStore as chat,
+  onAssistantReply,
+} from "../assistant/chat.store.svelte";
 import { getLang, t } from "../../lib/i18n.svelte";
 
 export type { VoiceMode };
@@ -14,6 +17,7 @@ export type VoicePhase =
 const MODE_KEY = "smartpc.voice.mode";
 const WAKE_KEY = "smartpc.voice.wake";
 const DEVICE_KEY = "smartpc.voice.device";
+const SPEAK_KEY = "smartpc.voice.speak";
 export const DEFAULT_WAKE_WORD = "hey";
 
 function loadMode(): VoiceMode {
@@ -39,6 +43,14 @@ function loadDevice(): string | null {
     return d ? d.slice(0, 128) : null;
   } catch {
     return null;
+  }
+}
+
+function loadSpeak(): boolean {
+  try {
+    return window.localStorage.getItem(SPEAK_KEY) === "1";
+  } catch {
+    return false;
   }
 }
 
@@ -69,6 +81,13 @@ let mode = $state<VoiceMode>(loadMode());
 let wakeWord = $state<string>(loadWake());
 let device = $state<string | null>(loadDevice());
 let error = $state("");
+// TTS output: auto-read replies aloud when enabled. `speaking` is
+// optimistic (the server gives no completion events by design); the timer
+// mirrors the server watchdog so the UI recovers even if audio overruns.
+let speakEnabled = $state<boolean>(loadSpeak());
+let speaking = $state(false);
+let speakTimer: number | null = null;
+let lastSpokenId: string | null = null;
 // Transient acknowledgment ("heard the wake word, talk now"), cleared after
 // a few seconds or on the next state change.
 let notice = $state("");
@@ -247,6 +266,65 @@ function setDevice(d: string | null): void {
   }
 }
 
+function setSpeakEnabled(on: boolean): void {
+  speakEnabled = on;
+  persist(SPEAK_KEY, on ? "1" : "0");
+  ensureReplySub();
+  if (!on) void stopSpeaking();
+}
+
+let replyUnsub: (() => void) | null = null;
+
+/** Speak fresh replies (never history loads — see onAssistantReply). */
+function ensureReplySub(): void {
+  if (!speakEnabled || replyUnsub) return;
+  replyUnsub = onAssistantReply((id, text) => {
+    if (!speakEnabled || !id || !text?.trim()) return;
+    if (id === lastSpokenId) return;
+    lastSpokenId = id;
+    void speakText(text);
+  });
+}
+
+ensureReplySub();
+
+function clearSpeakTimer(): void {
+  if (speakTimer !== null) {
+    window.clearTimeout(speakTimer);
+    speakTimer = null;
+  }
+}
+
+/** Read text aloud (barge-in: cuts anything playing). No-op on failure. */
+async function speakText(text: string): Promise<void> {
+  const clean = text.trim().slice(0, 2000);
+  if (!clean) return;
+  clearSpeakTimer();
+  try {
+    const res = await voiceApi.speak(clean, getLang());
+    speaking = true;
+    speakTimer = window.setTimeout(
+      () => {
+        speaking = false;
+        speakTimer = null;
+      },
+      Math.min(res.estimated_ms + 5000, 250000),
+    );
+  } catch {
+    speaking = false;
+  }
+}
+
+async function stopSpeaking(): Promise<void> {
+  clearSpeakTimer();
+  speaking = false;
+  try {
+    await voiceApi.stopSpeaking();
+  } catch {
+    /* already quiet */
+  }
+}
+
 export const voice = {
   get phase(): VoicePhase {
     return phase;
@@ -259,6 +337,12 @@ export const voice = {
   },
   get device(): string | null {
     return device;
+  },
+  get speakEnabled(): boolean {
+    return speakEnabled;
+  },
+  get speaking(): boolean {
+    return speaking;
   },
   get error(): string {
     return error;
@@ -278,4 +362,7 @@ export const voice = {
   setMode,
   setWakeWord,
   setDevice,
+  setSpeakEnabled,
+  speakText,
+  stopSpeaking,
 };

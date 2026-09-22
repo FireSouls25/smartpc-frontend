@@ -23,6 +23,7 @@ use crate::{
     chat::store::ChatStore,
     pi::PiSupervisor,
     stt::VoiceService,
+    tts::TtsManager,
 };
 
 /// Protocol version: bump on any incompatible HTTP contract change.
@@ -38,6 +39,7 @@ pub struct AppState {
     pub sidecar_token: Arc<String>,
     pub chat: Arc<Mutex<ChatStore>>,
     pub voice: VoiceService,
+    pub tts: TtsManager,
     pub pi: PiSupervisor,
 }
 
@@ -153,6 +155,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/voice/listen", post(crate::stt::routes::listen))
         .route("/v1/voice/stop", post(crate::stt::routes::stop))
         .route("/v1/voice/events", get(crate::stt::routes::events))
+        .route("/v1/voice/speak", post(crate::stt::routes::speak))
+        .route("/v1/voice/speak-stop", post(crate::stt::routes::speak_stop))
         .route("/internal/pi/tools", post(crate::pi::routes::tools))
         .route("/internal/pi/bootstrap", post(crate::pi::routes::bootstrap))
         .route("/internal/pi/tool", post(crate::pi::routes::tool))

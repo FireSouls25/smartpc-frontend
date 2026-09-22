@@ -116,8 +116,10 @@ renderer ──HTTP──► sidecar ──stdio JSONL──► pi --mode rpc
   tool turn executed in Rust with output mapped; missing default model fails
   loudly at `set_model` (no silent fallback). First real-tool bug caught by
   the spike (bridge omitted `pi_session` → 409s) is fixed and covered.
-- Phase 2: pi-listen TTS spike (`/voice-speak` headless, history check) →
-  optional speak toggle in UI.
+- Phase 2 (TTS output): pi-listen engine via disposable pi children —
+  implemented (speak/stop endpoints, auto-speak toggle, isolated pi home,
+  per-language Piper/Kitten voices). Extension commands emit no turn events
+  (spike-proven), so completion is watchdog-based, never awaited.
 - Phase 3: flip default, remove old harness (`ai/provider.rs`,
   `harness/agent.rs` loop, `openai_compat` chat paths) only after a full
   green cycle. Keep `harness/exec.rs` + `tools.rs` + `context/` + `prompt/`

@@ -17,6 +17,7 @@ mod pi;
 mod platform;
 mod secrets;
 mod stt;
+mod tts;
 
 use std::sync::{Arc, Mutex};
 
@@ -135,7 +136,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port = listener.local_addr()?.port();
     let pi = crate::pi::PiSupervisor::new(crate::pi::supervisor::PiConfig {
         bridge_path,
-        data_dir,
+        data_dir: data_dir.clone(),
         system_prompt_path: prompt_path,
         sidecar_url: format!("http://127.0.0.1:{port}"),
         sidecar_token: token.clone(),
@@ -149,6 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         store: Arc::new(Mutex::new(store)),
         chat: Arc::new(Mutex::new(chat_store)),
         voice: crate::stt::VoiceService::new(models_dir),
+        tts: crate::tts::TtsManager::new(data_dir.clone(), crate::tts::resolve_voice_ext()),
         pi,
         jwt_secret: Arc::new(jwt_secret),
         access_ttl_secs: 15 * 60,

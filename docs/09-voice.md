@@ -77,7 +77,8 @@ they render as user bubbles and run the agent identically to typed text; if
 the agent is busy the words land in the composer instead of being lost.
 Orb: capturing → `listening`; handoff leaves the agent's `thinking` alone.
 Mic button toggles the preferred mode; Settings → Voice holds mode, wake
-word, mic/model status. Prefs: `smartpc.voice.mode`, `smartpc.voice.wake`.
+word, input picker, and the read-aloud toggle. Prefs: `smartpc.voice.mode`,
+`smartpc.voice.wake`, `smartpc.voice.device`, `smartpc.voice.speak`.
 
 ## Session integrity (learned from a real stuck-session bug)
 
@@ -163,10 +164,33 @@ present and the break is the next stage:
 ## Limits & next
 
 - No partial transcripts (whisper is batch; VAD level could feed a meter).
-- One global session; no TTS reply path yet.
+- One global mic session; TTS speaks per-utterance disposable children.
 - Wake word is single-phrase text match — a proper acoustic spotter
   (openWakeWord/Porcupine) is the upgrade if false-wake cost ever matters.
-- 25 Rust unit tests (VAD machine incl. introspection, wake match + split,
-  resample/mixdown, model map, `parse_opts`, session stop idempotency);
-  contract pins status shape + listen validation + epoch wire; E2E covers the
+- 26 Rust unit tests (VAD machine incl. introspection, wake match + split,
+  resample/mixdown, model map, `parse_opts`, session stop idempotency, TTS
+  estimate/voices);
+  contract pins status shape + listen/speak validation + epoch wire; E2E covers the
   Voice settings section (headless has no mic — asserts graceful `notReady`).
+
+## TTS output (pi-listen engine, disposable children)
+
+Spikes proved two things that shape the design: extension commands never
+emit turn lifecycle events in RPC mode (no `agent_start`/`agent_settled` —
+verified with a trivial command too), and a finished engine sometimes keeps
+its child alive on leaked handles. So each utterance gets a FRESH pi child:
+prompt `/voice-speak`, drain stdout (never block the pipe), watchdog-SIGKILL
+after the duration estimate (~14 chars/sec + 20 s, 25–240 s). Leak-proof by
+construction; `/voice-speak-stop` (or any new speak) barges in by killing.
+
+The child runs with an isolated `HOME` (`<data>/pi/tts-home`, our own
+`settings.json`: TTS enabled, local backend, per-language voice) — never
+the user's real pi setup. Voices: Piper MIT per language (`es_ES-davefx`,
+`fr_FR-siwis`, …) defaulting to Kitten Nano EN. First use downloads ~21 MB.
+History stays clean (verified: 0 messages before/after a speak).
+`POST /v1/voice/speak {text, lang?}` → `{ok, estimated_ms}` (400 on empty /
+
+> 2000 chars); `POST /v1/voice/speak-stop` always ok. UI: Settings toggle
+> (`smartpc.voice.speak`), auto-speak on fresh replies only (pub/sub from the
+> send path — history loads never fire), speaking indicator with click-stop,
+> submit barges in.
