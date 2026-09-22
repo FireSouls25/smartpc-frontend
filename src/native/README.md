@@ -105,3 +105,11 @@ cargo test
 ./target/debug/smartpc-native --port 18080 --token dev-token-min-16 --db /tmp/dev.db
 curl localhost:18080/health
 ```
+
+Pi harness (Phase 1, opt-in): `PI_HARNESS=1` routes chat turns through
+`pi --mode rpc` (embedded node child, one per user) instead of the native
+agent loop — same HTTP contract, same UI. Needs node 22+ and pi on PATH
+(`npx -y -p @earendil-works/pi-coding-agent@0.87.0` resolves it on first
+use; `PI_BIN` overrides the binary, `PI_BRIDGE` the extension file).
+`npm run test:e2e:pi` proves a real UI→pi→ollama turn. See
+`frontend/docs/10-pi-harness.md`.

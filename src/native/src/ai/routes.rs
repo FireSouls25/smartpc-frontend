@@ -26,7 +26,7 @@ fn needs_key(id: &str) -> bool {
     id == "opencode"
 }
 
-async fn probe(id: &str) -> serde_json::Value {
+pub(crate) async fn probe(id: &str) -> serde_json::Value {
     // `installed` is tri-state: true when answering, a PATH check when a
     // startable server is down, null when the concept doesn't apply
     // (needs a model path / key instead of a local server).
@@ -65,7 +65,14 @@ async fn probe(id: &str) -> serde_json::Value {
 
 /// Live detection: probes every known provider concurrently.
 /// The UI offers only what answers; the rest renders as unavailable.
-pub async fn providers(State(_s): State<AppState>) -> impl IntoResponse {
+/// With `PI_HARNESS=1` the catalog comes from pi (plus the same loopback
+/// probes), so the UI reads what pi supports.
+pub async fn providers(State(s): State<AppState>) -> impl IntoResponse {
+    if crate::pi::enabled() {
+        let list = crate::pi::providers::catalog(&s).await;
+        return (StatusCode::OK, Json(serde_json::json!({ "providers": list })))
+            .into_response();
+    }
     let (ollama, llamacpp, opencode) =
         tokio::join!(probe("ollama"), probe("llama.cpp"), probe("opencode"));
     (

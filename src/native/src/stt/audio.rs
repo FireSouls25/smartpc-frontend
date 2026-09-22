@@ -178,7 +178,7 @@ pub fn open_capture(
     // match in order (the first "sof-hda-dsp" may be output-only or busy)
     // and report the last error only if none opens. Names compare trimmed:
     // ALSA pads some with trailing whitespace.
-    let mut candidates: Vec<cpal::Device> = match wanted
+    let candidates: Vec<cpal::Device> = match wanted
         .filter(|w| !w.trim().is_empty())
     {
         Some(name) => {
@@ -220,16 +220,8 @@ pub fn open_capture(
     };
     let mut last_err: Option<CaptureError> = None;
     for device in candidates {
-        let name = device
-            .description()
-            .ok()
-            .map(|d| d.name().to_string())
-            .unwrap_or_else(|| "?".to_string());
         match open_device(device, &tx) {
-            Ok((stream, mut desc)) => {
-                desc.device = name;
-                return Ok((stream, desc));
-            }
+            Ok(ok) => return Ok(ok),
             Err(e) => last_err = Some(e),
         }
     }
@@ -312,7 +304,7 @@ fn open_device(
     Ok((
         stream,
         CaptureDesc {
-            device: "?".to_string(),
+            device: desc,
             rate: from_rate,
             channels,
             format,

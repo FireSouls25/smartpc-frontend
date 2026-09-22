@@ -289,6 +289,27 @@ pub async fn chat(
         history_for_model(store.list_messages(&session_id).unwrap_or_default())
     };
 
+    // Pi harness: unified with run (every turn may act; steps ignored here).
+    // The chat endpoint never carried a language: default like everywhere.
+    if crate::pi::enabled() {
+        let done = match pi_chat_turn(
+            &s, &uid, &session_id, &prov_name, &model_name, &message, "es",
+        )
+        .await
+        {
+            Ok(d) => d,
+            Err(r) => return r,
+        };
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "reply": done.reply, "model": model_name,
+                "provider": provider.name(), "session_id": session_id,
+            })),
+        )
+            .into_response();
+    }
+
     chat_with_history(&s, &session_id, &provider, &model_name, history, &b).await
 }
 
@@ -761,6 +782,26 @@ pub async fn run(
         system.len() + history.iter().map(|m| m.content.len()).sum::<usize>() + schema_chars;
     let ctx_used = (sent_chars / 4) as u32;
     let ctx_window = provider.context_window();
+    // Pi harness (Phase 1, PI_HARNESS=1): identical contract, pi reasons.
+    if crate::pi::enabled() {
+        let done = match pi_chat_turn(
+            &s, &uid, &session_id, &prov_name, &model, &message, lang,
+        )
+        .await
+        {
+            Ok(d) => d,
+            Err(r) => return r,
+        };
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "reply": done.reply, "model": model, "provider": provider.name(),
+                "session_id": session_id, "steps": done.steps,
+                "context": { "used_tokens": done.used_tokens, "window": done.window.or(ctx_window) },
+            })),
+        )
+            .into_response();
+    }
     let (reply, trace, tool_turns) = match crate::harness::agent::run_loop(
         &provider, &model, history, &system, &sink, &policy, 6,
     )
@@ -825,7 +866,6 @@ struct DbActionSink {
     session_id: String,
     user_id: String,
 }
-
 impl crate::harness::agent::ActionSink for DbActionSink {
     fn action_started(&self, kind: &str, title: &str) -> Option<String> {
         // Single source of truth: the catalog decides what becomes an Action.
@@ -855,6 +895,147 @@ impl crate::harness::agent::ActionSink for DbActionSink {
     }
 }
 
+/// pi harness turn shared by `run` and `chat` (unified: every turn may act).
+/// Caller persists the user message first; this persists tool turns +
+/// assistant reply, touches the session, logs the run line, and returns the
+/// display payload. Identical HTTP shape to the native loop.
+struct PiTurnDone {
+    reply: String,
+    steps: Vec<crate::harness::agent::TraceStep>,
+    used_tokens: u32,
+    window: Option<u32>,
+}
+
+fn pi_error(e: &crate::pi::supervisor::PiError) -> Response {
+    use crate::pi::supervisor::PiError as E;
+    let (status, code, message) = match e {
+        E::Timeout => (504u16, "timeout", e.message()),
+        E::Unavailable(_) => (500u16, "misconfigured", e.message()),
+        E::Rpc(_) | E::TurnFailed(_) => (502u16, "ai_upstream", e.message()),
+    };
+    (
+        StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        Json(serde_json::json!({ "error": { "code": code, "message": message } })),
+    )
+        .into_response()
+}
+
+async fn pi_chat_turn(
+    s: &AppState,
+    uid: &str,
+    session_id: &str,
+    prov_name: &str,
+    model: &str,
+    message: &str,
+    lang: &str,
+) -> Result<PiTurnDone, Response> {
+    use crate::pi::turn::{run_turn, TurnInput};
+    // Same key gate as the native path for the provider we manage; every
+    // other pi provider authenticates through the user's own pi config.
+    if prov_name == "opencode"
+        && crate::secrets::get_key(uid, "opencode").is_none()
+        && !crate::pi::providers::pi_auth_has("opencode")
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": { "code": "missing_key", "message": "this provider needs an API key — add it in Settings" }
+            })),
+        )
+            .into_response());
+    }
+    let ctx = crate::harness::context::gather();
+    // Estimate fallback for the context meter when pi reports no usage.
+    let schema_chars: usize = crate::harness::tools::openai_schemas()
+        .iter()
+        .map(|v| v.to_string().len())
+        .sum();
+    let full_message = format!(
+        "{}\n\n{}\n{}",
+        crate::harness::prompt::turn_context(&ctx, lang),
+        message,
+        crate::harness::agent::TURN_REMINDER,
+    );
+    let est_used = ((full_message.len() + schema_chars) / 4) as u32;
+    let title: String = match lock_chat(s) {
+        Ok(store) => store
+            .get_session(session_id, uid)
+            .ok()
+            .flatten()
+            .map(|sess| sess.title)
+            .unwrap_or_else(|| title_of(message)),
+        Err(_) => title_of(message),
+    };
+    let out = run_turn(
+        &s.pi,
+        &s.chat,
+        TurnInput {
+            user_id: uid.to_string(),
+            chat_session_id: session_id.to_string(),
+            session_title: title,
+            provider: prov_name.to_string(),
+            model: model.to_string(),
+            message: full_message,
+        },
+    )
+    .await
+    .map_err(|e| pi_error(&e))?;
+    // Persist tool turns BEFORE the final reply (same ordering rule as the
+    // native path: the next run sees what was actually executed).
+    {
+        let store = lock_chat(s).map_err(|r| r)?;
+        for st in &out.steps {
+            let content = serde_json::json!({
+                "tool": st.tool, "ok": st.ok, "output": st.output_preview,
+            })
+            .to_string();
+            if store
+                .add_message(session_id, "tool", &content)
+                .is_err()
+            {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": { "code": "internal", "message": "internal server error" } })),
+                )
+                    .into_response());
+            }
+        }
+        if store
+            .add_message(session_id, "assistant", &out.reply)
+            .is_err()
+        {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": { "code": "internal", "message": "internal server error" } })),
+            )
+                .into_response());
+        }
+        let _ = store.touch_session(session_id, prov_name, Some(model));
+    }
+    let run_line = format!(
+        "[pi-run] session={} provider={} model={} steps={} calls={:?}",
+        session_id.chars().take(8).collect::<String>(),
+        prov_name,
+        model,
+        out.steps.len(),
+        out.steps
+            .iter()
+            .map(|t| {
+                let args: String = t.args.to_string().chars().take(80).collect();
+                format!("{}:{}:{}", t.tool, t.ok, args)
+            })
+            .collect::<Vec<_>>(),
+    );
+    eprintln!("{run_line}");
+    crate::diagnostics::push(run_line);
+    Ok(PiTurnDone {
+        reply: out.reply,
+        steps: out.steps,
+        used_tokens: out.used_tokens.unwrap_or(est_used),
+        window: out.window,
+    })
+}
+
 #[derive(Deserialize)]
 pub struct SaveKeyBody {
     pub provider: String,
@@ -874,6 +1055,20 @@ pub async fn save_key(
         Err(e) => return error_response(&e),
     };
     if !probe.requires_key() {
+        // Pi harness: providers pi manages itself (user's own pi auth) can't
+        // take keys through us — but only when they aren't local providers,
+        // which genuinely need no key at all.
+        if crate::pi::enabled()
+            && !crate::pi::providers::is_local_provider(&b.provider)
+        {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": { "code": "validation", "message": "this provider authenticates through pi itself — add the key with pi auth, not here", "field": "provider" }
+                })),
+            )
+                .into_response();
+        }
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
@@ -978,6 +1173,19 @@ pub async fn delete_key(
         Err(e) => return error_response(&e),
     };
     if !probe.requires_key() {
+        // Same pi-auth explanation as save_key (this one takes `provider`
+        // from the path instead of the body).
+        if crate::pi::enabled()
+            && !crate::pi::providers::is_local_provider(&provider)
+        {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": { "code": "validation", "message": "this provider authenticates through pi itself — manage the key with pi auth, not here", "field": "provider" }
+                })),
+            )
+                .into_response();
+        }
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({

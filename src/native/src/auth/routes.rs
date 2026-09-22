@@ -72,5 +72,7 @@ pub async fn delete_account(
     Extension(AuthedUser(uid)): Extension<AuthedUser>,
 ) -> Result<impl IntoResponse, AppError> {
     service::delete_account(&uid, &s).map_err(AppError)?;
+    // Reap the user's pi child (if any): it may hold their key in env.
+    s.pi.drop_child(&uid).await;
     Ok((StatusCode::OK, Json(serde_json::json!({ "ok": true }))))
 }

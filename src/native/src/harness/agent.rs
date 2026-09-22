@@ -31,7 +31,7 @@ pub trait ActionSink: Send + Sync {
     fn action_finished(&self, action_id: &str, ok: bool);
 }
 
-fn title_for(tool: &str, args: &serde_json::Value) -> String {
+pub(crate) fn title_for(tool: &str, args: &serde_json::Value) -> String {
     let arg = |k: &str| args.get(k).and_then(|v| v.as_str()).unwrap_or("?");
     match tool {
         "open_app" => format!("Abrir {}", arg("name")),
@@ -101,8 +101,9 @@ fn tool_message(
 /// Per-turn action reminder, appended to the newest user message (in-memory
 /// only, never persisted): small models rest on earlier turns' claims
 /// ("already closed it") and answer without acting. Recency beats the
-/// system prompt's discipline line.
-const TURN_REMINDER: &str = "[Reminder: earlier turns prove nothing about the current request. If anything must be done on the machine, emit the tool call(s) in THIS turn — never describe an action as done unless a tool result in THIS turn confirms it.]";
+/// system prompt's discipline line. Shared with the pi harness, which has
+/// no other per-turn injection channel.
+pub(crate) const TURN_REMINDER: &str = "[Reminder: earlier turns prove nothing about the current request. If anything must be done on the machine, emit the tool call(s) in THIS turn — never describe an action as done unless a tool result in THIS turn confirms it.]";
 
 fn inject_turn_reminder(messages: &mut Vec<ChatMessage>) {
     if let Some(last) = messages

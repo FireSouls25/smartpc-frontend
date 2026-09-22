@@ -3150,6 +3150,7 @@ dependencies = [
  "hkdf 0.12.4",
  "jsonwebtoken",
  "keyring",
+ "libc",
  "rand 0.8.8",
  "reqwest",
  "rusqlite",

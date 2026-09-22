@@ -27,6 +27,16 @@ impl ChatStore {
     pub fn open(db_path: &str) -> rusqlite::Result<Self> {
         let conn = db::connect(db_path)?;
         conn.execute_batch(include_str!("schema.sql"))?;
+        // pi harness mapping (Phase 1): tolerate pre-migration databases.
+        let has_pi_col: bool = conn
+            .prepare("SELECT pi_session_file FROM chat_sessions LIMIT 0")
+            .is_ok();
+        if !has_pi_col {
+            let _ = conn.execute(
+                "ALTER TABLE chat_sessions ADD COLUMN pi_session_file TEXT",
+                [],
+            );
+        }
         Ok(Self { conn })
     }
 
@@ -121,6 +131,48 @@ impl ChatStore {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
             Err(e) => Err(e),
         }
+    }
+
+    /// pi harness mapping (our chat session → pi session file). Pre-migration
+    /// databases lack the column: treat as unmapped, never as an error (the
+    /// caller creates a fresh pi session instead).
+    pub fn get_pi_session(
+        &self,
+        id: &str,
+        user_id: &str,
+    ) -> rusqlite::Result<Option<String>> {
+        let mut stmt = match self.conn.prepare(
+            "SELECT pi_session_file FROM chat_sessions WHERE id = ?1 AND user_id = ?2",
+        ) {
+            Ok(s) => s,
+            Err(_) => return Ok(None),
+        };
+        let mut rows = stmt.query(params![id, user_id])?;
+        match rows.next()? {
+            Some(r) => Ok(r.get::<_, Option<String>>(0)?),
+            None => Ok(None),
+        }
+    }
+
+    pub fn set_pi_session(
+        &self,
+        id: &str,
+        user_id: &str,
+        pi_file: &str,
+    ) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE chat_sessions SET pi_session_file = ?1 WHERE id = ?2 AND user_id = ?3",
+            params![pi_file, id, user_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_pi_session(&self, id: &str, user_id: &str) -> rusqlite::Result<()> {
+        let _ = self.conn.execute(
+            "UPDATE chat_sessions SET pi_session_file = NULL WHERE id = ?1 AND user_id = ?2",
+            params![id, user_id],
+        );
+        Ok(())
     }
 
     pub fn add_message(

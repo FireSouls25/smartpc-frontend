@@ -21,6 +21,7 @@ use tower_http::{
 use crate::{
     auth::{self, model::AuthError, store::Store},
     chat::store::ChatStore,
+    pi::PiSupervisor,
     stt::VoiceService,
 };
 
@@ -37,6 +38,7 @@ pub struct AppState {
     pub sidecar_token: Arc<String>,
     pub chat: Arc<Mutex<ChatStore>>,
     pub voice: VoiceService,
+    pub pi: PiSupervisor,
 }
 
 /// User id placed on the request by [`require_user`].
@@ -151,6 +153,9 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/voice/listen", post(crate::stt::routes::listen))
         .route("/v1/voice/stop", post(crate::stt::routes::stop))
         .route("/v1/voice/events", get(crate::stt::routes::events))
+        .route("/internal/pi/tools", post(crate::pi::routes::tools))
+        .route("/internal/pi/bootstrap", post(crate::pi::routes::bootstrap))
+        .route("/internal/pi/tool", post(crate::pi::routes::tool))
         .route("/v1/support/diagnostics", get(crate::diagnostics::handler))
         .merge(user_ai)
         .route_layer(middleware::from_fn_with_state(

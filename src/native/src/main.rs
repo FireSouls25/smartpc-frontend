@@ -13,6 +13,7 @@ mod auth;
 mod chat;
 mod diagnostics;
 mod harness;
+mod pi;
 mod platform;
 mod secrets;
 mod stt;
@@ -103,26 +104,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let chat_store = crate::chat::store::ChatStore::open(&db_path)?;
     // Whisper models live next to the db (<db-dir>/models), overridable
     // with WHISPER_MODEL_DIR. No new CLI flag: Electron already passes --db.
+    let data_dir = std::path::Path::new(&db_path)
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
     let models_dir = std::env::var("WHISPER_MODEL_DIR")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| {
-            std::path::Path::new(&db_path)
-                .parent()
-                .map(|p| p.join("models"))
-                .unwrap_or_else(|| std::path::PathBuf::from("models"))
-        });
+        .unwrap_or_else(|_| data_dir.join("models"));
+    // pi harness (Phase 1, behind PI_HARNESS=1): static system prompt baked
+    // once per boot; per-turn facts ride in the message (see turn_context).
+    // A missing prompt file fails pi turns loudly at spawn, never silently.
+    let prompt_path = data_dir.join("pi-system-prompt.txt");
+    {
+        let prompt = crate::harness::prompt::static_prompt(
+            &crate::harness::context::gather(),
+        );
+        if let Err(e) = std::fs::write(&prompt_path, prompt) {
+            eprintln!("warning: pi system prompt unwritable: {e}");
+        }
+    }
+    let bridge_path = match crate::pi::supervisor::resolve_bridge() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("warning: {e}");
+            std::path::PathBuf::from("pi-bridge/smartpc.ts (missing — set PI_BRIDGE)")
+        }
+    };
+
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", args.port)).await?;
+    let port = listener.local_addr()?.port();
+    let pi = crate::pi::PiSupervisor::new(crate::pi::supervisor::PiConfig {
+        bridge_path,
+        data_dir,
+        system_prompt_path: prompt_path,
+        sidecar_url: format!("http://127.0.0.1:{port}"),
+        sidecar_token: token.clone(),
+        tool_allowlist: crate::harness::tools::catalog()
+            .iter()
+            .map(|t| t.name)
+            .collect::<Vec<_>>()
+            .join(","),
+    });
     let state = api::AppState {
         store: Arc::new(Mutex::new(store)),
         chat: Arc::new(Mutex::new(chat_store)),
         voice: crate::stt::VoiceService::new(models_dir),
+        pi,
         jwt_secret: Arc::new(jwt_secret),
         access_ttl_secs: 15 * 60,
         refresh_ttl_secs: 30 * 24 * 3600,
         sidecar_token: Arc::new(token),
     };
 
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", args.port)).await?;
-    let port = listener.local_addr()?.port();
     // READY is the spawn contract with Electron: one line, then flush.
     println!("READY port={port}");
     {

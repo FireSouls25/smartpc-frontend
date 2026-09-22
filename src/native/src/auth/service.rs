@@ -239,6 +239,14 @@ mod tests {
             voice: crate::stt::VoiceService::new(
                 std::env::temp_dir().join("smartpc-test-models"),
             ),
+            pi: crate::pi::PiSupervisor::new(crate::pi::supervisor::PiConfig {
+                bridge_path: std::path::PathBuf::from("pi-bridge/smartpc.ts"),
+                data_dir: std::env::temp_dir(),
+                system_prompt_path: std::env::temp_dir().join("pi-system-prompt.txt"),
+                sidecar_url: "http://127.0.0.1:1".to_string(),
+                sidecar_token: "test".to_string(),
+                tool_allowlist: "get_system_context".to_string(),
+            }),
         }
     }
 
