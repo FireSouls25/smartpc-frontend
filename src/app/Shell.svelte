@@ -10,6 +10,7 @@
   import SessionsPane from "../domains/assistant/SessionsPane.svelte";
   import SettingsPage from "../domains/settings/SettingsPage.svelte";
   import ApiKeyModal from "../shared/ApiKeyModal.svelte";
+  import { installVoiceHotkey } from "../domains/voice/voice.store.svelte";
   import { fetchHealth, SIDECAR_PROTOCOL } from "../lib/api";
   import { t } from "../lib/i18n.svelte";
 
@@ -37,6 +38,9 @@
   });
 
   onDestroy(() => providers.stopProviderWatch());
+
+  // Global push-to-talk: the mic toggle shortcut works from anywhere.
+  onMount(() => installVoiceHotkey());
 </script>
 
 <div class="dot-bg min-h-dvh lg:h-dvh lg:overflow-hidden">

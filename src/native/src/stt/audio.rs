@@ -129,10 +129,14 @@ fn mic_hint_score(haystack_lower: &str) -> usize {
 
 /// Virtual sinks that open fine but can never hear a room: the null sink
 /// floods zero frames at full speed (the VAD never fires, sessions never
-/// finalize), so such devices are neither listed nor auto-picked.
+/// finalize), and monitor sources only mirror an output. Neither is listed
+/// nor auto-picked.
 fn is_sink_name(name: &str) -> bool {
     let n = name.trim().to_lowercase();
-    n == "null" || n.contains("discard") || n.contains("zero samples")
+    n == "null"
+        || n.contains("discard")
+        || n.contains("zero samples")
+        || n.contains("monitor")
 }
 
 fn device_score(d: &cpal::Device) -> usize {
@@ -445,6 +449,7 @@ mod tests {
             "Discard all samples (playback) or generate zero samples (capture)"
         ));
         assert!(is_sink_name("null"));
+        assert!(is_sink_name("HDMI monitor"));
         assert!(!is_sink_name("PipeWire Sound Server"));
         assert!(!is_sink_name("sof-hda-dsp, "));
     }

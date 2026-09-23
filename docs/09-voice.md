@@ -30,6 +30,10 @@ wake mode:   command utterance ──► transcribe ──► event, re-arm
   Settings → Voice, 1–32 chars) appears in a transcribed onset utterance;
   the next utterance is the command; re-arms until stopped.
 
+Both modes are also driven by the push-to-talk shortcut (default
+`Ctrl+M`, changeable in Settings → Voice): it toggles the mic from
+anywhere, and the mic button tooltip always names the current key.
+
 Wake detection is textual, not acoustic: VAD-gated onsets are transcribed
 with tiny and split into match + remainder (`split_wake_command`).
 Whole-word for single words ("they" ≠ "hey"; "¡Hey!" = "hey"), substring
@@ -43,7 +47,12 @@ VAD frames are 30 ms RMS at 16 kHz. Defaults: threshold `0.02`,
 `VOICE_SILENCE_MS=1200` hangover, `VOICE_MIN_SPEECH_MS=400` gate (clicks
 and coughs never start an utterance), `VOICE_MAX_UTTERANCE_S=30` cap.
 All env-overridable (`VOICE_THRESHOLD` is raw RMS). Pre-roll keeps the
-~300 ms before onset so the first syllable survives the gate.
+~300 ms before onset so the first syllable survives the gate. The start
+gate is M-of-N with a `VOICE_GAP_MS=120` tolerance: speech hovering around
+the threshold (vowels over, consonants under) accumulates hits across
+brief dips — only a sustained gap abandons the run. The session summary
+reports `best run H/N` so triage tells "too quiet" (0–2) from "hovering
+at the gate" (near N).
 
 ## Model (low-hardware first)
 
@@ -51,6 +60,12 @@ Default `tiny` (~75 MB): 11 s of speech transcribes in ~1.5 s on a laptop
 CPU (measured 2026-09-18, realtime factor ~0.14×). `WHISPER_MODEL` picks
 `tiny|tiny.en|base|base.en|small`; `WHISPER_THREADS` caps CPU (default
 min(4, cpus)); language per session (`es` default, from the UI lang).
+Settings → Voice offers the same model list per session (first use
+downloads, later listens are instant) plus a sensitivity control
+(Baja/Media/Alta → VAD threshold 0.035/0.02/0.01; Media omits the override
+so `VOICE_THRESHOLD` keeps working). If speech peaks below the threshold,
+raise sensitivity before touching OS gain — the session summary line
+(`max rms …`) tells you exactly where you landed.
 First use downloads from HuggingFace into `<db-dir>/models/`
 (`WHISPER_MODEL_DIR` overrides); progress goes to diagnostics. Greedy,
 single-segment, blank-suppressed: commands want latency, not poetry.
@@ -161,6 +176,9 @@ present and the break is the next stage:
    watch: if the max never approaches the threshold while you talk loudly,
    the mic gain is too low (OS volume) or `VOICE_THRESHOLD` too high
    (try `0.01`). If it fires constantly with no speech, threshold too low.
+   Always check the OS gain first: `wpctl get-volume @DEFAULT_AUDIO_SOURCE@`
+   (Linux) — 33 % (≈ −29 dB) buries speech under any threshold; 100 % is
+   the sane baseline before touching sensitivity.
 4. `voice: speech detected, capturing…` — VAD hears you.
 5. `voice: transcribing N samples…` + `voice: heard '…'` — whisper ran.
    `(empty)` means the VAD fired on noise; check stage 3 tuning.

@@ -33,6 +33,8 @@ pub struct ListenBody {
     pub lang: Option<String>,
     pub model: Option<String>,
     pub device: Option<String>,
+    /// VAD energy threshold override (0.005–0.1); omit for env/default.
+    pub threshold: Option<f32>,
 }
 
 /// Starts a session. Blocks on first-use model download (minutes on slow
@@ -41,7 +43,7 @@ pub async fn listen(
     State(s): State<AppState>,
     Json(b): Json<ListenBody>,
 ) -> impl IntoResponse {
-    let opts = match parse_opts(b.mode.as_deref(), b.wake_word.as_deref(), b.lang.as_deref(), b.model.as_deref(), b.device.as_deref()) {
+    let opts = match parse_opts(b.mode.as_deref(), b.wake_word.as_deref(), b.lang.as_deref(), b.model.as_deref(), b.device.as_deref(), b.threshold) {
         Ok(o) => o,
         Err(e) => return start_error_response(&e),
     };

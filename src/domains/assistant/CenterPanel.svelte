@@ -6,6 +6,7 @@
   import { providerStore as providers } from "./providers.store.svelte";
   import { sessionStore as sessions } from "./sessions.store.svelte";
   import { voice } from "../voice/voice.store.svelte";
+  import { displayHotkey } from "../voice/voice.store.svelte";
   import { t } from "../../lib/i18n.svelte";
 
   const orbLabels = () => ({
@@ -35,6 +36,12 @@
   }
 
   const combo = () => sessions.sessionCombo;
+
+  /** Mic tooltip: what a press (or the hotkey) does in the current mode. */
+  const micTitle = () =>
+    voice.mode === "wake"
+      ? `${t("voice.modeWake")} («${voice.wakeWord}») · ${displayHotkey(voice.hotkey)}`
+      : `${t("voice.modeManual")} · ${displayHotkey(voice.hotkey)}`;
 </script>
 
 <div class="flex h-full min-h-0 flex-1 flex-col gap-4">
@@ -110,6 +117,7 @@
           ? `${t("orb.listening")} (${voice.wakeWord})`
           : t("orb.listening")}
         aria-pressed={voice.listening}
+        title={micTitle()}
         disabled={voice.phase === "starting"}
       >
         <svg

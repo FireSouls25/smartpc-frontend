@@ -12,6 +12,8 @@ export interface VoiceStatus {
   device: string | null;
   inputs: string[];
   model_ready: boolean;
+  /** Per-model whisper download state (see stt/model.rs ALL_MODELS). */
+  models_ready: Record<string, boolean>;
 }
 
 export type VoiceEvent =
@@ -31,6 +33,8 @@ export const voiceApi = {
     wake_word: string;
     lang: string;
     device?: string;
+    model?: string;
+    threshold?: number;
   }) =>
     api<{ ok: boolean; epoch: number }>("/v1/voice/listen", {
       method: "POST",

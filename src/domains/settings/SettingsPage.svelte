@@ -14,6 +14,13 @@
   import ProviderStart from "../assistant/ProviderStart.svelte";
   import { voice, DEFAULT_WAKE_WORD } from "../voice/voice.store.svelte";
   import {
+    DEFAULT_HOTKEY,
+    displayHotkey,
+    formatHotkey,
+    suspendHotkey,
+    type VoiceSensitivity,
+  } from "../voice/voice.store.svelte";
+  import {
     voiceApi,
     type VoiceMode,
     type VoiceStatus,
@@ -128,12 +135,66 @@
     navigate("login");
   }
 
+  // Push-to-talk capture: while true the next keydown becomes the hotkey
+  // (Escape cancels). The global toggle is suspended meanwhile so the new
+  // combo doesn't fire the mic mid-capture.
+  let capturingHotkey = $state(false);
+
+  function beginHotkeyCapture(): void {
+    capturingHotkey = true;
+    suspendHotkey(true);
+  }
+
+  function captureHotkey(e: KeyboardEvent): void {
+    if (!capturingHotkey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === "Escape") {
+      capturingHotkey = false;
+      suspendHotkey(false);
+      return;
+    }
+    const combo = formatHotkey(e);
+    if (combo) {
+      voice.setHotkey(combo);
+      capturingHotkey = false;
+      suspendHotkey(false);
+    }
+  }
+
+  function sttOptions(): { value: string; label: string; hint?: string }[] {
+    return [
+      { value: "", label: t("voice.serverDefault") },
+      { value: "tiny", label: "tiny", hint: "~75 MB" },
+      { value: "tiny.en", label: "tiny.en", hint: "~75 MB" },
+      { value: "base", label: "base", hint: "~142 MB" },
+      { value: "base.en", label: "base.en", hint: "~142 MB" },
+      { value: "small", label: "small", hint: "~466 MB" },
+    ];
+  }
+
+  /** What will actually transcribe: the pick, or the server default. */
+  function effectiveStt(): { name: string; ready: boolean | null } {
+    if (voice.sttModel) {
+      return {
+        name: voice.sttModel,
+        ready: voiceStatus?.models_ready?.[voice.sttModel] ?? null,
+      };
+    }
+    return {
+      name: voiceStatus?.model ?? "…",
+      ready: voiceStatus?.model_ready ?? null,
+    };
+  }
+
   async function remove(): Promise<void> {
     if (!window.confirm(t("auth.deleteAsk"))) return;
     await auth.deleteAccount();
     navigate("register");
   }
 </script>
+
+<svelte:window onkeydown={captureHotkey} />
 
 <div class="flex flex-col gap-4">
   <div class="flex items-center gap-3">
@@ -311,6 +372,68 @@
               <p class="faint mt-1 text-xs">{voiceStatus.device}</p>
             {/if}
           </div>
+          <div>
+            <p class="label">{t("voice.sttModel")}</p>
+            <SelectMenu
+              label={t("voice.sttModel")}
+              value={voice.sttModel}
+              options={sttOptions()}
+              align="down"
+              onChange={(v) => {
+                voice.setSttModel(v);
+                void loadVoiceStatus();
+              }}
+            />
+            <p class="faint mt-1 text-xs">{t("voice.sttHint")}</p>
+          </div>
+          <div>
+            <p class="label">{t("voice.sensitivity")}</p>
+            <div class="flex flex-wrap gap-2">
+              {#each ["low", "medium", "high"] as VoiceSensitivity[] as v (v)}
+                <button
+                  class="chip"
+                  style={voice.sensitivity === v
+                    ? "border-color: var(--accent); color: var(--fg);"
+                    : ""}
+                  onclick={() => voice.setSensitivity(v)}
+                  aria-pressed={voice.sensitivity === v}
+                >
+                  {v === "low"
+                    ? t("voice.sensLow")
+                    : v === "medium"
+                      ? t("voice.sensMedium")
+                      : t("voice.sensHigh")}
+                </button>
+              {/each}
+            </div>
+            <p class="faint mt-1 text-xs">{t("voice.sensHint")}</p>
+          </div>
+          <div>
+            <p class="label">{t("voice.hotkey")}</p>
+            <div class="flex flex-wrap items-center gap-2">
+              <button
+                class="chip"
+                style={capturingHotkey
+                  ? "border-color: var(--accent); color: var(--fg);"
+                  : ""}
+                onclick={beginHotkeyCapture}
+              >
+                {capturingHotkey
+                  ? t("voice.pressKeys")
+                  : displayHotkey(voice.hotkey)}
+              </button>
+              {#if voice.hotkey !== DEFAULT_HOTKEY}
+                <button
+                  class="btn btn-ghost"
+                  style="padding: 0.375rem 0.75rem; font-size: 0.75rem;"
+                  onclick={() => voice.setHotkey(DEFAULT_HOTKEY)}
+                >
+                  {t("voice.hotkeyReset")}
+                </button>
+              {/if}
+            </div>
+            <p class="faint mt-1 text-xs">{t("voice.hotkeyHint")}</p>
+          </div>
           <div class="flex flex-wrap gap-2">
             <span class="chip">
               <span
@@ -328,11 +451,13 @@
             <span class="chip">
               <span
                 class="dot"
-                style="background: {voiceStatus?.model_ready
-                  ? 'var(--success)'
-                  : 'var(--warn)'};"
+                style="background: {effectiveStt().ready === false
+                  ? 'var(--warn)'
+                  : effectiveStt().ready
+                    ? 'var(--success)'
+                    : 'var(--border-strong)'};"
               ></span>
-              {t("voice.model")}: {voiceStatus?.model ?? "…"}
+              {t("voice.model")}: {effectiveStt().name}
             </span>
           </div>
           <div>

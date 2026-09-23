@@ -13,12 +13,24 @@ import { getLang, t } from "../../lib/i18n.svelte";
 export type { VoiceMode };
 export type VoicePhase =
   "idle" | "starting" | "listening" | "capturing" | "error";
+export type VoiceSensitivity = "low" | "medium" | "high";
 
 const MODE_KEY = "smartpc.voice.mode";
 const WAKE_KEY = "smartpc.voice.wake";
 const DEVICE_KEY = "smartpc.voice.device";
 const SPEAK_KEY = "smartpc.voice.speak";
+const SENS_KEY = "smartpc.voice.sensitivity";
+const STT_MODEL_KEY = "smartpc.voice.sttModel";
+const HOTKEY_KEY = "smartpc.voice.hotkey";
 export const DEFAULT_WAKE_WORD = "hey";
+/** Mic toggle shortcut. Shown on the mic button and editable in settings. */
+export const DEFAULT_HOTKEY = "Control+m";
+/** VAD energy threshold per sensitivity; medium omits it (server default). */
+export const SENSITIVITY_THRESHOLD: Record<VoiceSensitivity, number | null> = {
+  low: 0.035,
+  medium: null,
+  high: 0.01,
+};
 
 function loadMode(): VoiceMode {
   try {
@@ -54,6 +66,33 @@ function loadSpeak(): boolean {
   }
 }
 
+function loadSensitivity(): VoiceSensitivity {
+  try {
+    const v = window.localStorage.getItem(SENS_KEY);
+    return v === "low" || v === "high" ? v : "medium";
+  } catch {
+    return "medium";
+  }
+}
+
+function loadSttModel(): string {
+  try {
+    const m = (window.localStorage.getItem(STT_MODEL_KEY) || "").trim();
+    return ["tiny", "tiny.en", "base", "base.en", "small"].includes(m) ? m : "";
+  } catch {
+    return "";
+  }
+}
+
+function loadHotkey(): string {
+  try {
+    const h = (window.localStorage.getItem(HOTKEY_KEY) || "").trim();
+    return h ? h.slice(0, 64) : DEFAULT_HOTKEY;
+  } catch {
+    return DEFAULT_HOTKEY;
+  }
+}
+
 function persist(key: string, value: string): void {
   try {
     window.localStorage.setItem(key, value);
@@ -85,6 +124,9 @@ let error = $state("");
 // optimistic (the server gives no completion events by design); the timer
 // mirrors the server watchdog so the UI recovers even if audio overruns.
 let speakEnabled = $state<boolean>(loadSpeak());
+let sensitivity = $state<VoiceSensitivity>(loadSensitivity());
+let sttModel = $state<string>(loadSttModel());
+let hotkey = $state<string>(loadHotkey());
 let speaking = $state(false);
 let speakTimer: number | null = null;
 let lastSpokenId: string | null = null;
@@ -116,12 +158,17 @@ async function start(requested?: VoiceMode): Promise<void> {
   error = "";
   setNotice("");
   let epoch: number;
+  // Sensitivity rides per call (medium = server default, omitted);
+  // the STT model too (first use downloads it, later listens are instant).
+  const sensThreshold = SENSITIVITY_THRESHOLD[sensitivity];
   try {
     const res = await voiceApi.listen({
       mode,
       wake_word: wakeWord,
       lang: getLang(),
       ...(device ? { device } : {}),
+      ...(sttModel ? { model: sttModel } : {}),
+      ...(sensThreshold != null ? { threshold: sensThreshold } : {}),
     });
     epoch = res.epoch;
   } catch (err) {
@@ -249,6 +296,83 @@ function setMode(m: VoiceMode): void {
   persist(MODE_KEY, m);
 }
 
+function setSensitivity(s: VoiceSensitivity): void {
+  sensitivity = s;
+  persist(SENS_KEY, s);
+}
+
+function setSttModel(m: string): void {
+  const clean = m.trim().slice(0, 32);
+  sttModel = ["tiny", "tiny.en", "base", "base.en", "small"].includes(clean)
+    ? clean
+    : "";
+  persist(STT_MODEL_KEY, sttModel);
+}
+
+function setHotkey(combo: string): void {
+  const clean = combo.trim().slice(0, 64) || DEFAULT_HOTKEY;
+  hotkey = clean;
+  persist(HOTKEY_KEY, clean);
+}
+
+/** "Control+Shift+K" from a keydown; bare modifiers never form a combo. */
+export function formatHotkey(e: KeyboardEvent): string {
+  const parts: string[] = [];
+  if (e.ctrlKey) parts.push("Control");
+  if (e.metaKey) parts.push("Meta");
+  if (e.altKey) parts.push("Alt");
+  if (e.shiftKey) parts.push("Shift");
+  if (!["Control", "Shift", "Alt", "Meta"].includes(e.key)) {
+    parts.push(e.key.length === 1 ? e.key.toLowerCase() : e.key);
+  }
+  return parts.join("+");
+}
+
+/** Short display form ("Control+m" → "Ctrl+M"). */
+export function displayHotkey(combo: string): string {
+  return combo
+    .split("+")
+    .map((p) =>
+      p === "Control"
+        ? "Ctrl"
+        : p === "Meta"
+          ? "Meta"
+          : p.length === 1
+            ? p.toUpperCase()
+            : p,
+    )
+    .join("+");
+}
+
+let hotkeySuspended = false;
+
+/** Settings capture mode sets this so the combo being recorded doesn't fire. */
+export function suspendHotkey(v: boolean): void {
+  hotkeySuspended = v;
+}
+
+let hotkeyInstalled = false;
+
+/**
+ * Global mic toggle shortcut (installed once from Shell). Fires from
+ * anywhere — typing included — but never while recording a new combo.
+ */
+export function installVoiceHotkey(): () => void {
+  if (hotkeyInstalled || typeof window === "undefined") return () => {};
+  hotkeyInstalled = true;
+  const onKey = (e: KeyboardEvent) => {
+    if (hotkeySuspended || e.repeat) return;
+    if (formatHotkey(e) !== hotkey) return;
+    e.preventDefault();
+    toggle();
+  };
+  window.addEventListener("keydown", onKey);
+  return () => {
+    window.removeEventListener("keydown", onKey);
+    hotkeyInstalled = false;
+  };
+}
+
 function setWakeWord(w: string): void {
   wakeWord = w.trim().slice(0, 32) || DEFAULT_WAKE_WORD;
   persist(WAKE_KEY, wakeWord);
@@ -338,6 +462,15 @@ export const voice = {
   get device(): string | null {
     return device;
   },
+  get sensitivity(): VoiceSensitivity {
+    return sensitivity;
+  },
+  get sttModel(): string {
+    return sttModel;
+  },
+  get hotkey(): string {
+    return hotkey;
+  },
   get speakEnabled(): boolean {
     return speakEnabled;
   },
@@ -360,6 +493,9 @@ export const voice = {
   stop,
   toggle,
   setMode,
+  setSensitivity,
+  setSttModel,
+  setHotkey,
   setWakeWord,
   setDevice,
   setSpeakEnabled,

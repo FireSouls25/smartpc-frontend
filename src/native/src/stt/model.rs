@@ -15,6 +15,9 @@ const HF_BASE: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main
 
 pub const DEFAULT_MODEL: &str = "tiny";
 
+/// Every whisper model the sidecar can download (the UI offers these).
+pub const ALL_MODELS: &[&str] = &["tiny", "tiny.en", "base", "base.en", "small"];
+
 /// (bytes, approximate, for the progress log only).
 pub fn spec(name: &str) -> Option<(&'static str, u64)> {
     match name {

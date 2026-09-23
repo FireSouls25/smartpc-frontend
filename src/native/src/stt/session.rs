@@ -57,6 +57,8 @@ pub struct ListenOpts {
     pub lang: String,
     pub model: String,
     pub device: Option<String>,
+    /// VAD energy threshold override (RMS). 0.0 = unset (env/default wins).
+    pub threshold: f32,
 }
 
 #[derive(Debug)]
@@ -67,6 +69,7 @@ pub enum StartError {
     BadWakeWord,
     BadLang,
     BadDevice,
+    BadThreshold,
     ModelFailed(String),
     CaptureFailed(String),
 }
@@ -104,6 +107,11 @@ impl StartError {
                 "invalid_device",
                 "unknown input device (see voice status for names)".to_string(),
             ),
+            Self::BadThreshold => (
+                400,
+                "invalid_threshold",
+                "threshold must be between 0.005 and 0.1".to_string(),
+            ),
             Self::ModelFailed(e) => (502, "model_failed", e.clone()),
             Self::CaptureFailed(e) => (500, "capture_failed", e.clone()),
         }
@@ -117,6 +125,7 @@ pub fn parse_opts(
     lang: Option<&str>,
     model: Option<&str>,
     device: Option<&str>,
+    threshold: Option<f32>,
 ) -> Result<ListenOpts, StartError> {
     let mode = ListenMode::parse(mode.unwrap_or("manual")).ok_or(StartError::BadMode)?;
     let wake_word = wake_word.unwrap_or("hey").trim().to_string();
@@ -133,12 +142,20 @@ pub fn parse_opts(
         Some(d) if d.chars().count() <= 128 => Some(d),
         Some(_) => return Err(StartError::BadDevice),
     };
+    // 0.0/None = unset (env/default wins); explicit values are clamped to a
+    // sane VAD band so a typo can't deafen or hair-trigger the mic.
+    let threshold = match threshold {
+        None => 0.0,
+        Some(t) if (0.005..=0.1).contains(&t) => t,
+        Some(_) => return Err(StartError::BadThreshold),
+    };
     Ok(ListenOpts {
         mode,
         wake_word,
         lang,
         model: model::model_name_or_default(model),
         device,
+        threshold,
     })
 }
 
@@ -224,6 +241,10 @@ impl VoiceService {
             Err(_) => (false, false, None, None),
         };
         let model = model::model_name_or_default(None);
+        let models_ready: std::collections::BTreeMap<&str, bool> = model::ALL_MODELS
+            .iter()
+            .map(|m| (*m, model::model_ready(&self.models_dir, m)))
+            .collect();
         serde_json::json!({
             "listening": listening,
             "capturing": capturing,
@@ -234,6 +255,7 @@ impl VoiceService {
             "device": audio::input_device_name(),
             "inputs": audio::list_input_devices(),
             "model_ready": model::model_ready(&self.models_dir, &model),
+            "models_ready": models_ready,
         })
     }
 
@@ -403,46 +425,68 @@ mod tests {
 
     #[test]
     fn parse_opts_defaults() {
-        let o = parse_opts(None, None, None, None, None).unwrap();
+        let o = parse_opts(None, None, None, None, None, None).unwrap();
         assert_eq!(o.mode, ListenMode::Manual);
         assert_eq!(o.wake_word, "hey");
         assert_eq!(o.lang, "es");
         assert_eq!(o.model, model::DEFAULT_MODEL);
         assert_eq!(o.device, None);
+        assert_eq!(o.threshold, 0.0);
     }
 
     #[test]
     fn parse_opts_rejects_garbage() {
         assert!(matches!(
-            parse_opts(Some("shout"), None, None, None, None),
+            parse_opts(Some("shout"), None, None, None, None, None),
             Err(StartError::BadMode)
         ));
         assert!(matches!(
-            parse_opts(Some("wake"), Some(""), None, None, None),
+            parse_opts(Some("wake"), Some(""), None, None, None, None),
             Err(StartError::BadWakeWord)
         ));
         assert!(matches!(
-            parse_opts(Some("wake"), Some("hey"), Some("espanol"), None, None),
+            parse_opts(Some("wake"), Some("hey"), Some("espanol"), None, None, None),
             Err(StartError::BadLang)
         ));
         assert!(matches!(
-            parse_opts(Some("wake"), Some("hey"), Some("EN"), None, None),
+            parse_opts(Some("wake"), Some("hey"), Some("EN"), None, None, None),
             Ok(_)
         ));
         assert!(matches!(
-            parse_opts(Some("manual"), None, None, None, Some("Mic")),
+            parse_opts(Some("manual"), None, None, None, Some("Mic"), None),
             Ok(_)
         ));
         assert_eq!(
-            parse_opts(Some("manual"), None, None, None, Some("   "))
+            parse_opts(Some("manual"), None, None, None, Some("   "), None)
                 .unwrap()
                 .device,
             None
         );
         assert!(matches!(
-            parse_opts(Some("manual"), None, None, None, Some(&"x".repeat(200))),
+            parse_opts(Some("manual"), None, None, None, Some(&"x".repeat(200)), None),
             Err(StartError::BadDevice)
         ));
+    }
+
+    #[test]
+    fn parse_opts_threshold_band() {
+        let o = parse_opts(None, None, None, None, None, Some(0.01)).unwrap();
+        assert!((o.threshold - 0.01).abs() < f32::EPSILON);
+        assert!(matches!(
+            parse_opts(None, None, None, None, None, Some(0.0)),
+            Err(StartError::BadThreshold)
+        ));
+        assert!(matches!(
+            parse_opts(None, None, None, None, None, Some(0.5)),
+            Err(StartError::BadThreshold)
+        ));
+        assert!(matches!(
+            parse_opts(None, None, None, None, None, Some(-0.01)),
+            Err(StartError::BadThreshold)
+        ));
+        let (code, status, _) = StartError::BadThreshold.http_parts();
+        assert_eq!(code, 400);
+        assert_eq!(status, "invalid_threshold");
     }
 
     #[test]
@@ -540,6 +584,12 @@ impl Listener {
             .ok()
             .and_then(|v| v.trim().parse().ok())
             .unwrap_or(30);
+        // Per-call threshold wins over the env/default (the UI sensitivity
+        // control rides here); 0.0 means "not set".
+        let mut vad_cfg = VadConfig::from_env();
+        if opts.threshold > 0.0 {
+            vad_cfg.threshold = opts.threshold;
+        }
         Self {
             service,
             stop,
@@ -547,7 +597,7 @@ impl Listener {
             opts,
             epoch,
             engine,
-            vad: Vad::new(VadConfig::from_env()),
+            vad: Vad::new(vad_cfg),
             preroll: VecDeque::with_capacity(FRAME_SAMPLES * 10),
             utter: Vec::with_capacity(TARGET_RATE as usize * 8),
             capturing: false,
@@ -598,7 +648,7 @@ impl Listener {
             }
         };
         crate::diagnostics::push(format!(
-            "voice: listening (mode={}, lang={}, dev={}, {}ch@{}Hz {:?}, vad thr={} sil_ms={} min_ms={})",
+            "voice: listening (mode={}, lang={}, dev={}, {}ch@{}Hz {:?}, vad thr={} sil_ms={} min_ms={} gap_ms={})",
             self.opts.mode.as_str(),
             self.opts.lang,
             desc.device,
@@ -608,6 +658,7 @@ impl Listener {
             self.vad.threshold(),
             self.vad.silence_ms(),
             self.vad.min_speech_ms(),
+            self.vad.gap_ms(),
         ));
         self.emit(VoiceEvent::Started {});
         while !self.stopped() {
@@ -625,11 +676,17 @@ impl Listener {
             }
         }
         // Session summary: distinguishes "mic silent/wrong" (frames flowed,
-        // nothing captured) from "stream stalled" (no frames at all).
+        // nothing captured) from "stream stalled" (no frames at all). The
+        // best run tells "too quiet" (0–2 hits) from "hovering at the gate"
+        // (near the hit count): the former wants gain/sensitivity, the
+        // latter used to be the consecutive-frames reset.
         if self.captures == 0 && self.frames_seen > 0 {
             crate::diagnostics::push(format!(
-                "voice: session ended, no speech captured ({} frames, max rms {:.4})",
-                self.frames_seen, self.max_rms
+                "voice: session ended, no speech captured ({} frames, max rms {:.4}, best run {}/{})",
+                self.frames_seen,
+                self.max_rms,
+                self.vad.best_run(),
+                self.vad.min_speech_hits(),
             ));
         } else if self.frames_seen == 0 {
             crate::diagnostics::push(

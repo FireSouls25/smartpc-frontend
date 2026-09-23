@@ -5,6 +5,12 @@
 //! cutting them off). Tuned for close-talk laptop mics; every knob is env
 //! overridable (see [`VadConfig::from_env`]).
 //!
+//! The start gate is M-of-N, not N-consecutive: real speech at modest gain
+//! hovers around the threshold (vowels over, consonants under), so a single
+//! sub-threshold frame must not reset the run — only a sustained gap does.
+//! Isolated clicks (1–3 frames) still never start: they can't reach the hit
+//! count inside the gap window.
+//!
 //! The detector is deliberately dumb — whisper judges content, this only
 //! decides *when* to record. Short commands on `tiny` want generous hangover
 //! over aggressive cutoff: a late end wastes a second of CPU, an early end
@@ -20,8 +26,13 @@ pub struct VadConfig {
     /// Silent frames to wait before ending an utterance.
     pub silence_frames: usize,
     /// Speech frames required before an utterance officially starts
-    /// (pre-roll covers the gap so nothing is lost).
+    /// (pre-roll covers the gap so nothing is lost). Counted M-of-N: brief
+    /// dips under the threshold don't reset the run (see `gap_frames`).
     pub min_speech_frames: usize,
+    /// Consecutive sub-threshold frames that abandon a pending start run.
+    /// Covers micropauses and threshold hover; isolated clicks never reach
+    /// the hit count, so they still never start.
+    pub gap_frames: usize,
 }
 
 impl Default for VadConfig {
@@ -30,6 +41,7 @@ impl Default for VadConfig {
             threshold: 0.02,
             silence_frames: 40, // 1200 ms
             min_speech_frames: 13, // ~400 ms
+            gap_frames: 4,      // ~120 ms
         }
     }
 }
@@ -55,6 +67,7 @@ impl VadConfig {
             silence_frames: env_ms("VOICE_SILENCE_MS").unwrap_or(d.silence_frames),
             min_speech_frames: env_ms("VOICE_MIN_SPEECH_MS")
                 .unwrap_or(d.min_speech_frames),
+            gap_frames: env_ms("VOICE_GAP_MS").unwrap_or(d.gap_frames),
         }
     }
 }
@@ -72,7 +85,7 @@ pub enum VadTransition {
 #[derive(Debug)]
 enum State {
     Idle,
-    MaybeSpeech(usize),
+    MaybeSpeech { hits: usize, misses: usize },
     Speech(usize),
 }
 
@@ -80,6 +93,10 @@ enum State {
 pub struct Vad {
     cfg: VadConfig,
     state: State,
+    /// Longest start run this session (over-threshold hits before a reset
+    /// or a start). Diagnostics use it to tell "too quiet" (0–2) from
+    /// "hovering at the gate" (near `min_speech_frames`).
+    best_run: usize,
 }
 
 impl Vad {
@@ -87,6 +104,7 @@ impl Vad {
         Self {
             cfg,
             state: State::Idle,
+            best_run: 0,
         }
     }
 
@@ -103,26 +121,62 @@ impl Vad {
         self.cfg.min_speech_frames as u64 * 30
     }
 
+    pub fn gap_ms(&self) -> u64 {
+        self.cfg.gap_frames as u64 * 30
+    }
+
+    /// Longest over-threshold start run so far (hits, not frames).
+    pub fn best_run(&self) -> usize {
+        self.best_run
+    }
+
+    /// Hits needed to start (the M in M-of-N).
+    pub fn min_speech_hits(&self) -> usize {
+        self.cfg.min_speech_frames
+    }
+
+    fn note_run(&mut self, hits: usize) {
+        if hits > self.best_run {
+            self.best_run = hits;
+        }
+    }
+
     pub fn feed(&mut self, rms: f32) -> VadTransition {
         let speech = rms >= self.cfg.threshold;
         match (&self.state, speech) {
             (State::Idle, false) => VadTransition::Silence,
             (State::Idle, true) => {
-                self.state = State::MaybeSpeech(1);
+                self.state = State::MaybeSpeech {
+                    hits: 1,
+                    misses: 0,
+                };
                 VadTransition::Silence
             }
-            (State::MaybeSpeech(n), true) => {
-                let n = *n + 1;
-                if n >= self.cfg.min_speech_frames {
+            (State::MaybeSpeech { hits, misses }, true) => {
+                let hits = *hits + 1;
+                if hits >= self.cfg.min_speech_frames {
+                    self.note_run(hits);
                     self.state = State::Speech(0);
                     VadTransition::SpeechStart
                 } else {
-                    self.state = State::MaybeSpeech(n);
+                    self.state = State::MaybeSpeech {
+                        hits,
+                        misses: *misses,
+                    };
                     VadTransition::Silence
                 }
             }
-            (State::MaybeSpeech(_), false) => {
-                self.state = State::Idle;
+            (State::MaybeSpeech { hits, misses }, false) => {
+                let misses = *misses + 1;
+                if misses > self.cfg.gap_frames {
+                    self.note_run(*hits);
+                    self.state = State::Idle;
+                } else {
+                    self.state = State::MaybeSpeech {
+                        hits: *hits,
+                        misses,
+                    };
+                }
                 VadTransition::Silence
             }
             (State::Speech(_), true) => {
@@ -152,6 +206,7 @@ mod tests {
             threshold: 0.02,
             silence_frames: 4,
             min_speech_frames: 3,
+            gap_frames: 2,
         }
     }
 
@@ -168,10 +223,26 @@ mod tests {
         let mut v = Vad::new(cfg());
         assert_eq!(v.feed(0.1), VadTransition::Silence);
         assert_eq!(v.feed(0.1), VadTransition::Silence);
-        // Back to quiet before the gate: no start, still idle.
+        // Gap longer than the tolerance abandons the run: back to idle.
         assert_eq!(v.feed(0.001), VadTransition::Silence);
+        assert_eq!(v.feed(0.001), VadTransition::Silence);
+        assert_eq!(v.feed(0.001), VadTransition::Silence);
+        // A fresh blip starts a fresh run, still short of the gate.
         assert_eq!(v.feed(0.1), VadTransition::Silence);
         assert_eq!(v.feed(0.001), VadTransition::Silence);
+        assert_eq!(v.best_run(), 2);
+    }
+
+    #[test]
+    fn brief_dips_inside_the_gap_do_not_reset_the_run() {
+        let mut v = Vad::new(cfg());
+        // Speech hovering around the threshold (the modest-gain case):
+        // hits accumulate across single-frame dips and the run starts.
+        assert_eq!(v.feed(0.1), VadTransition::Silence);
+        assert_eq!(v.feed(0.001), VadTransition::Silence);
+        assert_eq!(v.feed(0.1), VadTransition::Silence);
+        assert_eq!(v.feed(0.1), VadTransition::SpeechStart);
+        assert_eq!(v.best_run(), 3);
     }
 
     #[test]
